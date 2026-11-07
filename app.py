@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ import streamlit.components.v1 as components
 from supabase import Client, create_client
 
 APP_TITLE = "합주기가 됩시다 합(베타)"
-APP_URL = "https://lets-be-hapjugi.streamlit.app/"
+APP_URL = "https://hapjugi.streamlit.app/"
 SCHEDULE_COMPONENT = components.declare_component(
     "schedule_grid", path=str(Path(__file__).parent / "schedule_grid_component")
 )
@@ -41,26 +42,53 @@ STATUS_CLASSES = {
 
 
 def get_supabase() -> Client:
+    """Return this browser session's Supabase client and keep its auth session alive.
+
+    Streamlit reruns the script frequently. Re-creating the Supabase client and
+    exchanging the same Google ID token on every rerun eventually causes
+    ``Bad ID token`` after that short-lived Google token expires. Keep one
+    client per Streamlit session instead; supabase-py's Auth client retains the
+    Supabase refresh token and can refresh its own session.
+    """
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_PUBLISHABLE_KEY"]
-    client = create_client(url, key)
+
+    client = st.session_state.get("_hapjugi_supabase_client")
+    if client is None:
+        client = create_client(url, key)
+        st.session_state["_hapjugi_supabase_client"] = client
 
     if not getattr(st.user, "is_logged_in", False):
         return client
 
     try:
-        # Google ID tokens may contain at_hash; Supabase also needs the matching access token.
+        # Reuse an existing Supabase session. Do NOT exchange the Google ID
+        # token again on every Streamlit rerun.
+        session = client.auth.get_session()
+        if session is not None:
+            expires_at = getattr(session, "expires_at", None)
+            refresh_token = getattr(session, "refresh_token", None)
+
+            # Refresh shortly before expiry. The SDK also maintains its auth
+            # session internally, but this explicit check covers idle tabs.
+            if expires_at is not None and int(expires_at) <= int(time.time()) + 60:
+                if not refresh_token:
+                    raise RuntimeError("Supabase 세션의 Refresh Token이 없습니다.")
+                refreshed = client.auth.refresh_session(refresh_token)
+                if not getattr(refreshed, "session", None):
+                    raise RuntimeError("Supabase 세션 갱신에 실패했습니다.")
+            return client
+
+        # First login in this Streamlit browser session only.
         tokens = st.user.tokens
         id_token = tokens.get("id")
         access_token = tokens.get("access")
 
         if not id_token:
-            st.error(
-                "Google 로그인 토큰을 읽지 못했습니다. Streamlit Cloud의 Secrets에서 "
-                '[auth] 아래 expose_tokens = ["id", "access"] 설정을 확인한 뒤, '
-                "앱에서 로그아웃하고 다시 로그인해 주세요."
+            raise RuntimeError(
+                "Google 로그인 토큰을 읽지 못했습니다. Secrets의 "
+                '[auth] expose_tokens = ["id", "access"] 설정을 확인하고 다시 로그인해 주세요.'
             )
-            st.stop()
 
         credentials = {"provider": "google", "token": id_token}
         if access_token:
@@ -70,15 +98,19 @@ def get_supabase() -> Client:
         if getattr(response, "session", None):
             return client
 
-        st.error("Supabase 로그인 세션을 만들지 못했습니다. 로그아웃한 뒤 다시 로그인해 주세요.")
-        st.stop()
+        raise RuntimeError("Supabase 로그인 세션을 만들지 못했습니다.")
     except Exception as exc:
         st.error(
-            f"Supabase 로그인 연결에 실패했습니다: {exc}\n\n"
-            'Streamlit Cloud의 Secrets에서 [auth] 아래 expose_tokens = ["id", "access"] 설정을 확인하고, '
-            "저장 후 앱에서 로그아웃한 다음 Google 로그인을 다시 해 주세요."
+            f"Supabase 로그인 연결에 실패했습니다: {exc}"
         )
+        st.warning(
+            "로그인 세션을 복구하지 못했습니다. Google 로그인을 다시 연결해 주세요."
+        )
+        if st.button("Google 로그인 다시 연결", type="primary", key="supabase_reauth"):
+            st.session_state.pop("_hapjugi_supabase_client", None)
+            st.logout()
         st.stop()
+
     return client
 
 
@@ -1060,7 +1092,11 @@ def main():
     SUPABASE=get_supabase(); user_id=current_user_id()
     top1,top2=st.columns([5,1]); top1.title(APP_TITLE)
     if top2.button('로그아웃',use_container_width=True):
-        SUPABASE.auth.sign_out(); st.logout()
+        try:
+            SUPABASE.auth.sign_out()
+        finally:
+            st.session_state.pop("_hapjugi_supabase_client", None)
+            st.logout()
 
     # Apply navigation requests before creating the radio widget; Streamlit
     # does not allow changing a widget's own session-state key afterward.
