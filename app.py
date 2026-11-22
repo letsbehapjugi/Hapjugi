@@ -1263,12 +1263,12 @@ def show_my_rooms(user_id: str):
         current = ids[0]
         st.session_state["active_room_id"] = current
 
-    card_width, card_height = (320, 198) if expanded else (362, 224)
+    card_width = 320 if expanded else 362
     carousel_key = "room-carousel-expanded" if expanded else "room-carousel"
 
     # Keep the heading and card row in one layout group so their spacing and
     # horizontal alignment can be controlled together.
-    with st.container(key="room-selector-layout"):
+    with st.container(key="room-selector-layout", gap="small"):
         title_col, toggle_col = st.columns([8, 1], vertical_alignment="center")
         title_col.markdown("#### 내 합주실")
         if toggle_col.button(
@@ -1284,7 +1284,7 @@ def show_my_rooms(user_id: str):
         with st.container(
             key=carousel_key,
             horizontal=True,
-            horizontal_alignment="left",
+            horizontal_alignment="center",
             vertical_alignment="center",
             gap="medium",
         ):
@@ -1308,7 +1308,6 @@ def show_my_rooms(user_id: str):
                     key=card_key,
                     border=True,
                     width=card_width,
-                    height=card_height,
                 ):
                     st.markdown(
                         f'''<div class="room-card-content">
@@ -1326,23 +1325,17 @@ def show_my_rooms(user_id: str):
                         </div>''',
                         unsafe_allow_html=True,
                     )
-                    # A dedicated right-aligned horizontal container avoids
-                    # relying on column widths to position the action button.
-                    with st.container(
-                        key=f"room-card-actions-{idx}",
-                        horizontal=True,
-                        horizontal_alignment="right",
-                        vertical_alignment="center",
+                    # Keep the button as the card's last direct child. CSS
+                    # anchors this child to the lower-right corner of the card.
+                    if st.button(
+                        "선택됨" if is_selected else "이동",
+                        type="primary" if is_selected else "secondary",
+                        disabled=is_selected,
+                        use_container_width=False,
+                        key=f"room_open_{room_id}",
                     ):
-                        if st.button(
-                            "선택됨" if is_selected else "이동",
-                            type="primary" if is_selected else "secondary",
-                            disabled=is_selected,
-                            use_container_width=False,
-                            key=f"room_open_{room_id}",
-                        ):
-                            st.session_state["active_room_id"] = room_id
-                            st.rerun()
+                        st.session_state["active_room_id"] = room_id
+                        st.rerun()
 
     return next(r for r in rooms if str(r["id"]) == current)
 
@@ -1802,70 +1795,118 @@ def main():
       display:flex !important; justify-content:stretch !important; width:100% !important;
     }
 
-    /* Room selector: balanced heading/card spacing and consistent left alignment. */
-    div.st-key-room-selector-layout {
-      width:100% !important; max-width:100% !important;
-      margin-top:-.25rem !important; gap:.35rem !important;
+    /* Main content: reduce the top dead space and keep side margins balanced. */
+    section.main > div.block-container,
+    [data-testid="stMainBlockContainer"] {
+      padding-top:1.35rem !important;
+      padding-left:clamp(1rem, 2vw, 1.75rem) !important;
+      padding-right:clamp(1rem, 2vw, 1.75rem) !important;
     }
-    div.st-key-room-selector-layout > [data-testid="stVerticalBlock"] {
-      gap:.35rem !important;
+
+    /* Room selector heading and card row use one consistent left/right inset. */
+    div.st-key-room-selector-layout {
+      width:100% !important;
+      max-width:100% !important;
+      margin-top:-.55rem !important;
+    }
+    div.st-key-room-selector-layout > [data-testid="stVerticalBlock"],
+    div.st-key-room-selector-layout [data-testid="stVerticalBlock"] {
+      gap:.2rem !important;
     }
     div.st-key-room-selector-layout [data-testid="stMarkdownContainer"] h4 {
-      margin:0 !important; padding:0 !important; line-height:1.2 !important;
+      margin:0 !important;
+      padding:0 !important;
+      line-height:1.15 !important;
     }
-    div.st-key-room-selector-layout > [data-testid="stHorizontalBlock"]:first-child,
-    div.st-key-room-selector-layout > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"]:first-child {
-      padding:0 4px !important; margin:0 !important; box-sizing:border-box !important;
+    div.st-key-room-selector-layout [data-testid="stHorizontalBlock"]:first-child {
+      padding:0 4px !important;
+      margin:0 !important;
+      box-sizing:border-box !important;
       align-items:center !important;
     }
     div.st-key-toggle_room_list_layout {
-      display:flex !important; justify-content:flex-end !important; align-items:center !important;
+      display:flex !important;
+      justify-content:flex-end !important;
+      align-items:center !important;
     }
     div.st-key-toggle_room_list_layout [data-testid="stBaseButton-secondary"] {
-      width:auto !important; min-width:72px !important; min-height:32px !important;
-      height:32px !important; padding:.25rem .7rem !important; font-size:.82rem !important;
+      width:auto !important;
+      min-width:72px !important;
+      min-height:32px !important;
+      height:32px !important;
+      padding:.25rem .7rem !important;
+      font-size:.82rem !important;
       border-radius:999px !important;
     }
-    div.st-key-room-carousel {
-      display:flex !important; flex-direction:row !important; flex-wrap:nowrap !important;
-      align-items:stretch !important; justify-content:safe center !important;
-      gap:16px !important; width:100% !important; max-width:100% !important;
-      overflow-x:auto !important; overflow-y:hidden !important;
-      padding:4px 4px 14px !important; box-sizing:border-box !important;
-      scroll-snap-type:x mandatory !important; scrollbar-width:thin !important;
-      overscroll-behavior-x:contain !important; touch-action:pan-x pan-y !important;
-    }
-    div.st-key-room-carousel > [data-testid="stElementContainer"],
-    div.st-key-room-carousel > div:not([data-testid="stHorizontalBlock"]):not([data-testid="stVerticalBlock"]) {
-      flex:0 0 362px !important; width:362px !important; min-width:362px !important;
-      max-width:362px !important; box-sizing:border-box !important;
-    }
-    div.st-key-room-carousel div[class*="st-key-room-card-"] {
-      flex:0 0 362px !important; width:362px !important; min-width:362px !important;
-      max-width:362px !important; height:224px !important; min-height:224px !important;
-      max-height:224px !important; box-sizing:border-box !important; scroll-snap-align:start !important;
-    }
+
+    /* The carousel is the ONLY horizontally scrollable element in this area. */
+    div.st-key-room-carousel,
     div.st-key-room-carousel-expanded {
-      display:flex !important; flex-direction:row !important; flex-wrap:wrap !important;
-      align-items:stretch !important; justify-content:center !important;
-      gap:16px !important; width:100% !important; max-width:100% !important;
-      overflow:visible !important; padding:4px 4px 12px !important; box-sizing:border-box !important;
+      width:100% !important;
+      max-width:100% !important;
+      margin-top:-.9rem !important;
+      overflow:visible !important;
+      box-sizing:border-box !important;
     }
-    div.st-key-room-carousel-expanded > [data-testid="stElementContainer"],
-    div.st-key-room-carousel-expanded > div:not([data-testid="stHorizontalBlock"]):not([data-testid="stVerticalBlock"]) {
-      flex:0 0 320px !important; width:320px !important; min-width:320px !important;
-      max-width:320px !important; box-sizing:border-box !important;
+    div.st-key-room-carousel[data-testid="stHorizontalBlock"],
+    div.st-key-room-carousel > [data-testid="stHorizontalBlock"] {
+      display:flex !important;
+      flex-direction:row !important;
+      flex-wrap:nowrap !important;
+      align-items:stretch !important;
+      justify-content:safe center !important;
+      gap:16px !important;
+      width:100% !important;
+      max-width:100% !important;
+      overflow-x:auto !important;
+      overflow-y:hidden !important;
+      padding:4px 4px 14px !important;
+      box-sizing:border-box !important;
+      scroll-snap-type:x mandatory !important;
+      scrollbar-width:thin !important;
+      overscroll-behavior-x:contain !important;
+      touch-action:pan-x pan-y !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
-      flex:0 0 320px !important; width:320px !important; min-width:320px !important;
-      max-width:320px !important; height:198px !important; min-height:198px !important;
-      max-height:198px !important; box-sizing:border-box !important;
+    div.st-key-room-carousel-expanded[data-testid="stHorizontalBlock"],
+    div.st-key-room-carousel-expanded > [data-testid="stHorizontalBlock"] {
+      display:flex !important;
+      flex-direction:row !important;
+      flex-wrap:wrap !important;
+      align-items:stretch !important;
+      justify-content:center !important;
+      gap:16px !important;
+      width:100% !important;
+      max-width:100% !important;
+      overflow:visible !important;
+      padding:4px 4px 12px !important;
+      box-sizing:border-box !important;
     }
 
+    /* Card dimensions are CSS dimensions, not Streamlit fixed-height containers.
+       Removing st.container(height=...) prevents an inner scrollbar per card. */
+    div[class*="st-key-room-card-"] {
+      flex:0 0 362px !important;
+      width:362px !important;
+      min-width:362px !important;
+      max-width:362px !important;
+      height:224px !important;
+      min-height:224px !important;
+      max-height:224px !important;
+      overflow:visible !important;
+      box-sizing:border-box !important;
+      scroll-snap-align:start !important;
+    }
+    div[class*="st-key-room-card-"] > [data-testid="stVerticalBlockBorderWrapper"],
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] {
-      display:flex !important; width:100% !important; min-width:100% !important;
-      max-width:100% !important; height:100% !important; min-height:100% !important;
-      max-height:100% !important; box-sizing:border-box !important; overflow:hidden !important;
+      display:flex !important;
+      width:100% !important;
+      min-width:100% !important;
+      max-width:100% !important;
+      height:100% !important;
+      min-height:100% !important;
+      max-height:100% !important;
+      box-sizing:border-box !important;
+      overflow:hidden !important;
       border-radius:18px !important;
       background:linear-gradient(145deg, var(--hap-surface), color-mix(in srgb, var(--hap-surface) 90%, #2563EB)) !important;
       border:1px solid color-mix(in srgb, #2563EB 22%, var(--hap-border)) !important;
@@ -1878,84 +1919,156 @@ def main():
       box-shadow:0 8px 22px color-mix(in srgb, #2563EB 14%, transparent), var(--hap-shadow-raised) !important;
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
-      width:100% !important; height:100% !important; min-height:100% !important;
-      box-sizing:border-box !important; padding:22px 24px 16px !important;
-      display:flex !important; flex-direction:column !important;
-      justify-content:space-between !important; gap:8px !important;
+      display:flex !important;
+      flex-direction:column !important;
+      align-items:stretch !important;
+      justify-content:space-between !important;
+      gap:8px !important;
+      width:100% !important;
+      height:100% !important;
+      min-height:0 !important;
+      box-sizing:border-box !important;
+      padding:22px 24px 16px !important;
+      overflow:hidden !important;
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:first-child {
-      flex:1 1 auto !important; width:100% !important; min-height:0 !important;
-      display:flex !important; align-items:center !important; margin:0 !important;
+      flex:1 1 auto !important;
+      width:100% !important;
+      min-height:0 !important;
+      display:flex !important;
+      align-items:center !important;
+      margin:0 !important;
     }
-    div[class*="st-key-room-card-actions-"] {
-      display:flex !important; flex:0 0 auto !important;
-      width:100% !important; min-width:100% !important; max-width:100% !important;
-      justify-content:flex-end !important; align-items:center !important; margin:0 !important;
+    /* Button is a direct final child, pinned consistently to the lower-right. */
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child {
+      flex:0 0 38px !important;
+      align-self:flex-end !important;
+      width:92px !important;
+      min-width:92px !important;
+      max-width:92px !important;
+      margin:0 !important;
     }
-    div[class*="st-key-room-card-actions-"][data-testid="stHorizontalBlock"],
-    div[class*="st-key-room-card-actions-"] [data-testid="stHorizontalBlock"] {
-      display:flex !important; width:100% !important; min-width:100% !important;
-      justify-content:flex-end !important; align-items:center !important;
-      gap:0 !important; margin:0 !important;
-    }
-    div[class*="st-key-room-card-actions-"] [data-testid="stElementContainer"] {
-      flex:0 0 auto !important; width:auto !important; margin-left:auto !important;
-    }
-    div[class*="st-key-room-card-actions-"] [data-testid="stButton"] {
-      display:flex !important; width:92px !important; min-width:92px !important;
-      max-width:92px !important; justify-content:flex-end !important; margin-left:auto !important;
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child [data-testid="stButton"] {
+      display:flex !important;
+      justify-content:flex-end !important;
+      width:92px !important;
+      min-width:92px !important;
+      max-width:92px !important;
+      margin:0 !important;
     }
     div[class*="st-key-room-card-"] .room-card-content {
-      display:flex !important; flex:1 1 auto !important; flex-direction:column !important;
-      align-items:flex-start !important; justify-content:center !important; gap:18px !important;
-      width:100% !important; height:140px !important; min-height:140px !important;
+      display:flex !important;
+      flex:1 1 auto !important;
+      flex-direction:column !important;
+      align-items:flex-start !important;
+      justify-content:center !important;
+      gap:18px !important;
+      width:100% !important;
+      height:100% !important;
+      min-height:0 !important;
       box-sizing:border-box !important;
     }
     div[class*="st-key-room-card-"] .room-card-name {
-      width:100%; color:var(--hap-text); font-size:1.34rem; line-height:1.3;
-      font-weight:800; letter-spacing:-.045em; overflow-wrap:anywhere;
-      display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+      width:100%;
+      color:var(--hap-text);
+      font-size:1.34rem;
+      line-height:1.3;
+      font-weight:800;
+      letter-spacing:-.045em;
+      overflow-wrap:anywhere;
+      display:-webkit-box;
+      -webkit-line-clamp:2;
+      -webkit-box-orient:vertical;
+      overflow:hidden;
     }
     div[class*="st-key-room-card-"] .room-card-meta {
-      display:flex; align-items:center; flex-wrap:wrap; gap:17px;
-      min-height:22px; width:100%;
+      display:flex;
+      align-items:center;
+      flex-wrap:wrap;
+      gap:17px;
+      min-height:22px;
+      width:100%;
     }
     div[class*="st-key-room-card-"] .room-card-meta-item {
-      display:inline-flex; align-items:baseline; gap:7px; min-height:0;
-      box-sizing:border-box; padding:0; border:0 !important; border-radius:0;
-      background:transparent !important; box-shadow:none !important;
+      display:inline-flex;
+      align-items:baseline;
+      gap:7px;
+      min-height:0;
+      box-sizing:border-box;
+      padding:0;
+      border:0 !important;
+      border-radius:0;
+      background:transparent !important;
+      box-shadow:none !important;
     }
     div[class*="st-key-room-card-"] .room-card-meta-item + .room-card-meta-item {
-      padding-left:16px; border-left:1px solid var(--hap-border) !important;
+      padding-left:16px;
+      border-left:1px solid var(--hap-border) !important;
     }
     div[class*="st-key-room-card-"] .room-card-meta-label {
-      color:var(--hap-muted); font-size:.76rem; font-weight:650; white-space:nowrap;
+      color:var(--hap-muted);
+      font-size:.76rem;
+      font-weight:650;
+      white-space:nowrap;
     }
     div[class*="st-key-room-card-"] .room-card-meta-value {
-      color:var(--hap-text); font-size:.84rem; font-weight:800; white-space:nowrap;
-    }
-    div[class*="st-key-room-card-"] [data-testid="stButton"] {
-      display:flex !important; justify-content:flex-end !important; align-items:center !important;
-      width:100% !important; margin:0 !important;
+      color:var(--hap-text);
+      font-size:.84rem;
+      font-weight:800;
+      white-space:nowrap;
     }
     div[class*="st-key-room-card-"] [data-testid="stBaseButton-secondary"],
     div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
-      width:92px !important; min-width:92px !important; max-width:92px !important;
-      min-height:38px !important; height:38px !important; padding:.4rem .8rem !important;
-      margin-left:auto !important; border-radius:11px !important;
-      font-size:.84rem !important; font-weight:750 !important;
+      width:92px !important;
+      min-width:92px !important;
+      max-width:92px !important;
+      min-height:38px !important;
+      height:38px !important;
+      padding:.4rem .8rem !important;
+      margin:0 !important;
+      border-radius:11px !important;
+      font-size:.84rem !important;
+      font-weight:750 !important;
     }
     div[class*="st-key-room-card-selected-"] [data-testid="stBaseButton-primary"]:disabled {
-      opacity:1 !important; cursor:default !important; color:#2563EB !important;
+      opacity:1 !important;
+      cursor:default !important;
+      color:#2563EB !important;
       background:color-mix(in srgb, #2563EB 13%, var(--hap-surface)) !important;
       border:1px solid color-mix(in srgb, #2563EB 27%, var(--hap-border)) !important;
       box-shadow:var(--hap-shadow-inset) !important;
     }
+
+    /* Expanded cards retain the same alignment at their smaller dimensions. */
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
+      flex:0 0 320px !important;
+      width:320px !important;
+      min-width:320px !important;
+      max-width:320px !important;
+      height:198px !important;
+      min-height:198px !important;
+      max-height:198px !important;
+    }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
       padding:15px 17px 12px !important;
     }
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child {
+      flex-basis:36px !important;
+      width:88px !important;
+      min-width:88px !important;
+      max-width:88px !important;
+    }
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child [data-testid="stButton"],
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-secondary"],
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
+      width:88px !important;
+      min-width:88px !important;
+      max-width:88px !important;
+      min-height:36px !important;
+      height:36px !important;
+    }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-content {
-      height:110px !important; min-height:110px !important; gap:13px !important;
+      gap:13px !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-name {
       font-size:1.18rem !important;
@@ -1964,7 +2077,7 @@ def main():
       gap:13px !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-item {
-      min-height:0 !important; padding:0 !important; gap:6px !important;
+      gap:6px !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-item + .room-card-meta-item {
       padding-left:12px !important;
@@ -1975,31 +2088,31 @@ def main():
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-value {
       font-size:.79rem !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-secondary"],
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
-      min-height:36px !important; height:36px !important; width:88px !important;
-      min-width:88px !important; max-width:88px !important;
-    }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {
-      flex-basis:31% !important;
-    }
 
-    @media (max-width: 680px) {
-      div.st-key-room-carousel > [data-testid="stElementContainer"],
+    @media (max-width:680px) {
+      div.st-key-room-carousel[data-testid="stHorizontalBlock"],
+      div.st-key-room-carousel > [data-testid="stHorizontalBlock"] {
+        justify-content:flex-start !important;
+      }
       div.st-key-room-carousel div[class*="st-key-room-card-"] {
-        flex:0 0 min(362px, 86vw) !important; width:min(362px, 86vw) !important;
-        min-width:min(362px, 86vw) !important; max-width:min(362px, 86vw) !important;
-        height:auto !important; aspect-ratio:362 / 224 !important;
-        min-height:0 !important; max-height:none !important;
+        flex-basis:min(362px, 86vw) !important;
+        width:min(362px, 86vw) !important;
+        min-width:min(362px, 86vw) !important;
+        max-width:min(362px, 86vw) !important;
+        height:auto !important;
+        aspect-ratio:362 / 224 !important;
+        min-height:0 !important;
+        max-height:none !important;
       }
-      div.st-key-room-carousel-expanded {
-        justify-content:center !important; gap:12px !important;
-      }
-      div.st-key-room-carousel-expanded > [data-testid="stElementContainer"],
       div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
-        width:min(320px, 88vw) !important; min-width:0 !important;
-        max-width:100% !important; height:auto !important; aspect-ratio:320 / 198 !important;
-        min-height:0 !important; max-height:none !important;
+        flex-basis:min(320px, 88vw) !important;
+        width:min(320px, 88vw) !important;
+        min-width:0 !important;
+        max-width:100% !important;
+        height:auto !important;
+        aspect-ratio:320 / 198 !important;
+        min-height:0 !important;
+        max-height:none !important;
       }
       div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
         padding:16px !important;
