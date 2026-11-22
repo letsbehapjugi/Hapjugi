@@ -562,19 +562,22 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
         # A component event already caused this Streamlit run. Process all cells
         # in batches instead of making one network request per cell or forcing
         # an extra full-app rerun (both caused visible lag/flicker).
-        st.session_state[event_state_key] = result["event_id"]
         cells = result.get("cells") or []
         status = result.get("status") or selected_status
         rows_to_upsert = []
         clear_by_date: dict[str, set[str]] = {}
         for cell in cells:
-            d = date.fromisoformat(cell["date"])
-            time_text = str(cell["minute"])
-            if ":" in time_text:
-                hour_text, minute_text = time_text.split(":", 1)
-                m = int(hour_text) * 60 + int(minute_text)
-            else:
-                m = int(time_text)
+            try:
+                d = date.fromisoformat(str(cell["date"]))
+                time_text = str(cell["minute"])
+                if ":" in time_text:
+                    hour_text, minute_text = time_text.split(":", 1)
+                    m = int(hour_text) * 60 + int(minute_text)
+                else:
+                    m = int(time_text)
+            except (KeyError, TypeError, ValueError):
+                continue
+
             if not 0 <= m < 1440 or m % 15 != 0:
                 continue
             slot = minute_to_time(m)
@@ -590,16 +593,32 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
                     "time": slot,
                     "status": status,
                 })
-        if rows_to_upsert:
+
+        # Large drags can contain hundreds or thousands of cells. Send them
+        # in smaller requests so one oversized PostgREST payload cannot cause
+        # the whole stroke to fail. Upsert is idempotent, so a retry is safe.
+        batch_size = 200
+        for start in range(0, len(rows_to_upsert), batch_size):
+            batch = rows_to_upsert[start:start + batch_size]
             SUPABASE.table("availability").upsert(
-                rows_to_upsert, on_conflict="room_id,user_id,date,time"
+                batch, on_conflict="room_id,user_id,date,time"
             ).execute()
+
+        # Deletes are also chunked to keep URL/filter sizes bounded.
         for date_text, slots in clear_by_date.items():
-            SUPABASE.table("availability").delete().eq(
-                "room_id", room["id"]
-            ).eq("user_id", user_id).eq("date", date_text).in_(
-                "time", sorted(slots)
-            ).execute()
+            sorted_slots = sorted(slots)
+            for start in range(0, len(sorted_slots), batch_size):
+                batch = sorted_slots[start:start + batch_size]
+                SUPABASE.table("availability").delete().eq(
+                    "room_id", room["id"]
+                ).eq("user_id", user_id).eq("date", date_text).in_(
+                    "time", batch
+                ).execute()
+
+        # Mark this component event as handled only after every database
+        # request succeeds. If a request fails halfway through, the same
+        # event can be retried on the next Streamlit rerun.
+        st.session_state[event_state_key] = result["event_id"]
 
 
 def _window_editor(prefix: str, room_start: date, room_end: date, windows: list[dict[str, Any]]) -> list[dict[str, Any]]:
