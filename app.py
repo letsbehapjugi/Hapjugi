@@ -900,39 +900,48 @@ def show_schedule_input(room, user_id, windows):
     elif saved_notice:
         st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
 
-    bulk_col, clear_col = st.columns([3.2, 1.25], vertical_alignment="bottom")
-    with bulk_col:
-        st.markdown("**미선택 시간 일괄 설정**")
-        b1, b2 = st.columns(2)
-        mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
-        if b1.button("합주 완전 가능", use_container_width=True, key=f"bulk_yes_{room['id']}"):
-            try:
-                written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
-                st.session_state[notice_key] = written
-                st.rerun()
-            except Exception as exc:
-                st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
-        if b2.button("합주 완전 불가", use_container_width=True, key=f"bulk_no_{room['id']}"):
-            try:
-                written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
-                st.session_state[notice_key] = written
-                st.rerun()
-            except Exception as exc:
-                st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
-    with clear_col:
-        st.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
-        if st.button("내 일정 전체 지우기", use_container_width=True, key=f"bulk_clear_{room['id']}"):
-            try:
-                SUPABASE.table('availability').delete().eq('room_id', room['id']).eq('user_id', user_id).execute()
-                remaining = get_user_availability(room['id'], user_id, dates[0], dates[-1]) if dates else []
-                if remaining:
-                    raise RuntimeError(f"아직 {len(remaining)}칸이 남아 있습니다.")
-                reset_token_key = f"schedule_reset_{room['id']}"
-                st.session_state[reset_token_key] = st.session_state.get(reset_token_key, 0) + 1
-                st.session_state[notice_key] = 0
-                st.rerun()
-            except Exception as exc:
-                st.error(f"일정을 전체 삭제하지 못했습니다: {exc}")
+    # Bulk fill and destructive reset are deliberately separated into
+    # independent sections so the reset action is not perceived as a third
+    # bulk-fill option.
+    st.subheader("미선택 시간 일괄 설정")
+    st.caption("아직 상태를 입력하지 않은 시간에만 적용됩니다. 이미 입력한 일정은 유지됩니다.")
+    b1, b2 = st.columns(2)
+    mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
+    if b1.button("합주 완전 가능", use_container_width=True, key=f"bulk_yes_{room['id']}"):
+        try:
+            written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
+            st.session_state[notice_key] = written
+            st.rerun()
+        except Exception as exc:
+            st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+    if b2.button("합주 완전 불가", use_container_width=True, key=f"bulk_no_{room['id']}"):
+        try:
+            written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
+            st.session_state[notice_key] = written
+            st.rerun()
+        except Exception as exc:
+            st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+
+    # 삭제는 일괄 입력과 별개의 '위험 작업' 영역으로 분리한다.
+    st.markdown(" ")
+    with st.container(border=True):
+        st.markdown("**일정 초기화**")
+        reset_info, reset_action = st.columns([4, 1.5], vertical_alignment="center")
+        with reset_info:
+            st.caption("현재 방에서 내가 입력한 일정을 모두 삭제합니다. 위의 빈 시간 일괄 설정과는 별개의 작업입니다.")
+        with reset_action:
+            if st.button("내 일정 전체 지우기", use_container_width=True, key=f"bulk_clear_{room['id']}"):
+                try:
+                    SUPABASE.table('availability').delete().eq('room_id', room['id']).eq('user_id', user_id).execute()
+                    remaining = get_user_availability(room['id'], user_id, dates[0], dates[-1]) if dates else []
+                    if remaining:
+                        raise RuntimeError(f"아직 {len(remaining)}칸이 남아 있습니다.")
+                    reset_token_key = f"schedule_reset_{room['id']}"
+                    st.session_state[reset_token_key] = st.session_state.get(reset_token_key, 0) + 1
+                    st.session_state[notice_key] = 0
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"일정을 전체 삭제하지 못했습니다: {exc}")
 
     reset_token_key = f"schedule_reset_{room['id']}"
     if reset_token_key not in st.session_state:
@@ -1221,15 +1230,19 @@ def show_my_rooms(user_id: str):
         room_id = str(room["id"])
         is_selected = room_id == current
         is_host = str(room.get("host_id")) == str(user_id)
-        subline = f"방 번호 {room['room_code']}" + (" · 방장" if is_host else "")
+        # 현재 선택된 방에는 상태 표시만 두고, 이동 버튼은 다른 방에만 둔다.
+        # 따라서 한 카드 안에 '선택됨'과 '이동'이 동시에 보이지 않는다.
         with st.container(border=True):
-            card_text, action = st.columns([6, 1.1], vertical_alignment="center")
+            card_text, action = st.columns([6, 1.25], vertical_alignment="center")
             card_text.markdown(f"### {room['room_name']}")
-            card_text.caption(subline)
+            if is_host:
+                card_text.caption("방장")
             if is_selected:
-                action.button("선택됨", type="primary", disabled=True,
-                              use_container_width=True, key=f"room_selected_{room_id}")
-            elif action.button("열기", type="secondary", use_container_width=True,
+                action.markdown(
+                    '<div class="room-current-state">현재 선택</div>',
+                    unsafe_allow_html=True,
+                )
+            elif action.button("이동", type="secondary", use_container_width=True,
                                key=f"room_open_{room_id}"):
                 st.session_state["active_room_id"] = room_id
                 st.rerun()
@@ -1347,36 +1360,140 @@ def main():
       display: none !important;
       visibility: hidden !important;
     }
-    /* Blue is the app-wide interaction/accent color (availability colors stay semantic). */
-    :root { --primary-color: #2563EB !important; --color-primary: #2563EB !important; }
-    button[kind="primary"], [data-testid="stBaseButton-primary"] {
-      background: #2563EB !important; border-color: #2563EB !important; color: #fff !important;
+    /* 앱 전체의 기존 코랄 포인트(#CF4250)를 블루로 통일한다.
+       시간표의 상태색(합주 불가 = 빨강)은 의미 전달용이므로 변경하지 않는다. */
+    :root {
+      --primary-color: #2563EB !important;
+      --color-primary: #2563EB !important;
+      --st-primary-color: #2563EB !important;
+      --accent-color: #2563EB !important;
+      --primary: #2563EB !important;
+      --primary-50: #EFF6FF !important;
+      --primary-100: #DBEAFE !important;
+      --primary-600: #2563EB !important;
+      --primary-700: #1D4ED8 !important;
+      --color-primary-light: #DBEAFE !important;
+      --color-primary-dark: #1D4ED8 !important;
+      --st-color-primary: #2563EB !important;
+      --st-color-primary-bg: #EFF6FF !important;
+      --st-color-primary-hover: #1D4ED8 !important;
+      --st-color-primary-active: #1E40AF !important;
     }
-    button[kind="primary"]:hover, [data-testid="stBaseButton-primary"]:hover {
-      background: #1D4ED8 !important; border-color: #1D4ED8 !important;
+    button[kind="primary"],
+    [data-testid="stBaseButton-primary"],
+    [data-testid="stFormSubmitButton"] button {
+      background: #2563EB !important;
+      border-color: #2563EB !important;
+      color: #fff !important;
     }
-    [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
-      background: #2563EB !important; border-color: #2563EB !important; color: #fff !important;
+    button[kind="primary"]:hover,
+    [data-testid="stBaseButton-primary"]:hover,
+    [data-testid="stFormSubmitButton"] button:hover {
+      background: #1D4ED8 !important;
+      border-color: #1D4ED8 !important;
     }
+    /* Main navigation: 내 합주실 / 방 만들기 / 방 참여하기 */
+    [data-testid="stSegmentedControl"] button[aria-pressed="true"],
+    [data-testid="stSegmentedControl"] button[data-selected="true"],
+    [data-baseweb="button-group"] button[aria-pressed="true"] {
+      background: #2563EB !important;
+      border-color: #2563EB !important;
+      color: #fff !important;
+    }
+    /* Inner tabs: 내 일정 입력 / 합주 가능 시간 / 멤버별 일정 / 방장 설정 */
+    [data-testid="stTabs"] button[role="tab"][aria-selected="true"],
+    [data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"],
+    [data-testid="stTabs"] button[aria-selected="true"] {
+      color: #2563EB !important;
+      border-bottom-color: #2563EB !important;
+    }
+    [data-testid="stTabs"] [data-baseweb="tab-highlight"],
+    [data-testid="stTabs"] [data-baseweb="tab-border"] {
+      background-color: #2563EB !important;
+      border-color: #2563EB !important;
+    }
+    /* Radio/checkbox selection, input focus and keyboard focus rings. */
     [data-testid="stCheckbox"] input:checked + div,
-    [data-testid="stRadio"] input:checked + div { border-color: #2563EB !important; }
-    [data-baseweb="select"]:focus-within, [data-baseweb="input"]:focus-within,
-    [data-baseweb="textarea"]:focus-within { border-color: #2563EB !important; }
-    /* Navigation should look like three connected tabs, not radio controls. */
+    [data-testid="stRadio"] input:checked + div,
+    [data-testid="stCheckbox"] label:has(input:checked) > div,
+    [data-testid="stRadio"] label:has(input:checked) > div {
+      border-color: #2563EB !important;
+    }
+    [data-baseweb="select"]:focus-within,
+    [data-baseweb="input"]:focus-within,
+    [data-baseweb="textarea"]:focus-within,
+    [data-testid="stTextInput"] input:focus,
+    [data-testid="stDateInput"] input:focus {
+      border-color: #2563EB !important;
+      box-shadow: 0 0 0 1px #2563EB !important;
+    }
+    button:focus-visible, [role="tab"]:focus-visible {
+      outline-color: #2563EB !important;
+    }
+    a, [data-testid="stMarkdownContainer"] a { color: #2563EB; }
+    [data-baseweb="checkbox"] [aria-checked="true"],
+    [data-baseweb="radio"] [aria-checked="true"] { border-color: #2563EB !important; }
+    /* Keep the three main navigation choices evenly distributed. */
     div[data-testid="stSegmentedControl"] { width: 100%; margin-bottom: 1rem; }
     div[data-testid="stSegmentedControl"] > div { width: 100%; }
     div[data-testid="stSegmentedControl"] button { flex: 1 1 0; justify-content: center; font-weight: 600; }
+
+    /* 절제된 뉴모피즘: 과한 입체감 대신 낮은 대비의 그림자와 밝은 면만 사용 */
+    [data-testid="stAppViewContainer"] { background: #F5F7FB; }
+    [data-testid="stVerticalBlockBorderWrapper"] {
+      border: 1px solid rgba(148,163,184,.16) !important;
+      border-radius: 16px !important;
+      background: linear-gradient(145deg, #FFFFFF, #F7F9FD) !important;
+      box-shadow: 5px 5px 14px rgba(30,41,59,.055), -4px -4px 12px rgba(255,255,255,.9) !important;
+    }
+    [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"] {
+      border-radius: 11px !important;
+      transition: box-shadow .16s ease, transform .16s ease, background .16s ease;
+    }
+    [data-testid="stBaseButton-secondary"] {
+      background: linear-gradient(145deg, #FFFFFF, #F1F5F9) !important;
+      border: 1px solid rgba(148,163,184,.22) !important;
+      box-shadow: 3px 3px 7px rgba(30,41,59,.07), -2px -2px 6px rgba(255,255,255,.9) !important;
+      color: #334155 !important;
+    }
+    [data-testid="stBaseButton-secondary"]:hover {
+      box-shadow: inset 2px 2px 5px rgba(30,41,59,.07), inset -2px -2px 5px rgba(255,255,255,.9) !important;
+      border-color: rgba(37,99,235,.3) !important;
+      color: #1D4ED8 !important;
+    }
+    [data-testid="stBaseButton-primary"] {
+      box-shadow: 3px 3px 8px rgba(37,99,235,.18), -2px -2px 6px rgba(255,255,255,.25) !important;
+    }
+    .app-brand-title {
+      text-align: center; font-size: clamp(1.65rem, 3vw, 2.25rem);
+      font-weight: 800; letter-spacing: -.055em; color: #172554;
+      padding: .35rem 0 .7rem;
+    }
+    .room-current-state {
+      text-align: center; padding: .48rem .35rem; border-radius: 10px;
+      color: #1D4ED8; font-weight: 700; font-size: .88rem;
+      background: #EAF1FF; border: 1px solid rgba(37,99,235,.14);
+      box-shadow: inset 2px 2px 4px rgba(37,99,235,.06), inset -2px -2px 4px rgba(255,255,255,.9);
+    }
+    /* 제목과 상단 메뉴를 같은 중앙 축에 맞춘다. */
+    div[data-testid="stSegmentedControl"] { max-width: 760px; margin: 0 auto 1.35rem !important; }
+    div[data-testid="stSegmentedControl"] > div { border-radius: 14px; padding: 4px; background: #EEF2F8; box-shadow: inset 2px 2px 5px rgba(30,41,59,.08), inset -2px -2px 5px #fff; }
+    div[data-testid="stSegmentedControl"] button { border-radius: 10px !important; }
     </style>""", unsafe_allow_html=True)
     require_login()
     global SUPABASE
     SUPABASE=get_supabase(); user_id=current_user_id()
-    top1,top2=st.columns([5,1]); top1.title(APP_TITLE)
-    if top2.button('로그아웃',use_container_width=True):
-        try:
-            SUPABASE.auth.sign_out()
-        finally:
-            st.session_state.pop("_hapjugi_supabase_client", None)
-            st.logout()
+    # 상단 브랜드 영역: 제목은 중앙, 로그아웃은 우측에 배치한다.
+    head_left, head_center, head_right = st.columns([1, 5, 1], vertical_alignment="center")
+    with head_center:
+        st.markdown(f'<div class="app-brand-title">{APP_TITLE}</div>', unsafe_allow_html=True)
+    with head_right:
+        if st.button('로그아웃', use_container_width=True, key="top_logout"):
+            try:
+                SUPABASE.auth.sign_out()
+            finally:
+                st.session_state.pop("_hapjugi_supabase_client", None)
+                st.logout()
 
     # Apply navigation requests before creating the radio widget; Streamlit
     # does not allow changing a widget's own session-state key afterward.
@@ -1385,7 +1502,9 @@ def main():
     pending_section = st.session_state.pop("pending_main_section", None)
     if pending_section in ["내 합주실", "방 만들기", "방 참여하기"]:
         st.session_state["main_section_radio"] = pending_section
-    section=st.segmented_control('메뉴',['내 합주실','방 만들기','방 참여하기'],key='main_section_radio',label_visibility='collapsed')
+    nav_left, nav_center, nav_right = st.columns([1, 5, 1])
+    with nav_center:
+        section=st.segmented_control('메뉴',['내 합주실','방 만들기','방 참여하기'],key='main_section_radio',label_visibility='collapsed')
     if section is None:
         section = '내 합주실'
     if section=='내 합주실':
