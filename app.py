@@ -937,7 +937,7 @@ def show_schedule_input(room, user_id, windows):
             )
             yes_col, no_col = st.columns(2, gap="medium", vertical_alignment="center")
             with yes_col:
-                if st.button("합주 완전 가능", use_container_width=True,
+                if st.button("합주 완전 가능", use_container_width=False,
                              key=f"bulk_yes_{room['id']}"):
                     try:
                         written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
@@ -946,7 +946,7 @@ def show_schedule_input(room, user_id, windows):
                     except Exception as exc:
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
             with no_col:
-                if st.button("합주 완전 불가능", use_container_width=True,
+                if st.button("합주 완전 불가능", use_container_width=False,
                              key=f"bulk_no_{room['id']}"):
                     try:
                         written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
@@ -956,7 +956,7 @@ def show_schedule_input(room, user_id, windows):
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
 
     with clear_col:
-        if st.button("내 일정 전체 지우기", type="tertiary", use_container_width=True,
+        if st.button("내 일정 전체  \n지우기", type="tertiary", use_container_width=False,
                      key=f"bulk_clear_{room['id']}"):
             confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
 
@@ -1288,14 +1288,14 @@ def show_my_rooms(user_id: str):
                 st.markdown(
                     f'''<div class="room-card-content">
                         <div class="room-card-name">{safe_room_name}</div>
-                        <div class="room-card-details">
-                            <div class="room-card-detail">
-                                <span class="room-card-detail-label">멤버</span>
-                                <strong class="room-card-detail-value">{member_count}명</strong>
+                        <div class="room-card-meta">
+                            <div class="room-card-meta-item">
+                                <span class="room-card-meta-label">멤버</span>
+                                <strong class="room-card-meta-value">{member_count}명</strong>
                             </div>
-                            <div class="room-card-detail">
-                                <span class="room-card-detail-label">내 세션</span>
-                                <strong class="room-card-detail-value">{safe_session}</strong>
+                            <div class="room-card-meta-item">
+                                <span class="room-card-meta-label">내 세션</span>
+                                <strong class="room-card-meta-value">{safe_session}</strong>
                             </div>
                         </div>
                     </div>''',
@@ -1529,26 +1529,39 @@ def main():
       padding:12px 14px !important; border-radius:14px !important;
     }
     div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
-      width:100% !important; justify-content:center !important; gap:10px !important;
+      width:100% !important; justify-content:center !important; gap:16px !important;
     }
     .schedule-tools-heading {
-      width:100%; margin:0; color:var(--hap-text); font-size:.94rem;
+      width:100%; margin:0; padding:0 0 3px;
+      color:var(--hap-text); font-size:.94rem;
       font-weight:750; letter-spacing:-.03em; text-align:center; line-height:1.25;
       white-space:normal; word-break:keep-all;
     }
     div[class*="st-key-bulk-family-"] [data-testid="stHorizontalBlock"] {
       align-items:center !important; gap:.7rem !important;
     }
+    div[class*="st-key-bulk-family-"] [data-testid="stButton"] {
+      display:flex !important; justify-content:center !important; width:100% !important;
+    }
     div[class*="st-key-bulk-family-"] [data-testid="stBaseButton-secondary"] {
+      width:148px !important; min-width:148px !important; max-width:100% !important;
       min-height:48px !important; height:48px !important; white-space:normal !important;
       line-height:1.2 !important; padding:.4rem .55rem !important; font-size:.9rem !important;
     }
+    div[class*="st-key-bulk_clear_"] {
+      width:100% !important; display:flex !important; justify-content:center !important;
+    }
     div[class*="st-key-bulk_clear_"] [data-testid="stBaseButton-tertiary"] {
-      min-height:48px !important; height:48px !important; white-space:normal !important;
-      padding:.4rem .7rem !important; border:0 !important;
+      width:108px !important; min-width:108px !important; max-width:108px !important;
+      min-height:68px !important; height:68px !important; white-space:normal !important;
+      line-height:1.25 !important; padding:.45rem .55rem !important; border:0 !important;
       border-radius:11px !important; background:var(--hap-button-gradient) !important;
       box-shadow:var(--hap-shadow-raised) !important; color:var(--hap-button-text) !important;
-      font-weight:700 !important;
+      font-weight:700 !important; text-align:center !important;
+    }
+    div[class*="st-key-bulk_clear_"] [data-testid="stBaseButton-tertiary"] p {
+      text-align:center !important; white-space:pre-line !important; line-height:1.22 !important;
+      margin:0 !important;
     }
 
     /* Room selector: regular container with a horizontal scrolling card row. */
@@ -1610,30 +1623,38 @@ def main():
     }
     div[class*="st-key-room-card-"] .room-card-content {
       display:flex; flex:1 1 auto; flex-direction:column; justify-content:center;
-      gap:18px; width:100%; min-height:0; box-sizing:border-box;
+      gap:19px; height:100%; min-height:0; width:100%; box-sizing:border-box;
     }
     div[class*="st-key-room-card-"] .room-card-name {
-      color:var(--hap-text); font-size:1.38rem; line-height:1.3;
+      color:var(--hap-text); font-size:1.34rem; line-height:1.28;
       font-weight:800; letter-spacing:-.045em; overflow-wrap:anywhere;
       display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
     }
-    div[class*="st-key-room-card-"] .room-card-details {
-      display:flex; align-items:center; flex-wrap:wrap; gap:22px;
+    div[class*="st-key-room-card-"] .room-card-meta {
+      display:flex; align-items:center; flex-wrap:wrap; gap:9px;
     }
-    div[class*="st-key-room-card-"] .room-card-detail {
-      display:inline-flex; align-items:baseline; gap:7px; white-space:nowrap;
+    div[class*="st-key-room-card-"] .room-card-meta-item {
+      display:inline-flex; align-items:center; gap:8px; min-height:35px;
+      box-sizing:border-box; padding:7px 11px; border-radius:10px;
+      background:color-mix(in srgb, #2563EB 6%, var(--hap-surface));
+      border:1px solid color-mix(in srgb, #2563EB 16%, var(--hap-border));
     }
-    div[class*="st-key-room-card-"] .room-card-detail-label {
-      color:var(--hap-muted); font-size:.82rem; font-weight:600;
+    div[class*="st-key-room-card-"] .room-card-meta-label {
+      color:var(--hap-muted); font-size:.76rem; font-weight:650; white-space:nowrap;
     }
-    div[class*="st-key-room-card-"] .room-card-detail-value {
-      color:var(--hap-text); font-size:.96rem; font-weight:800;
+    div[class*="st-key-room-card-"] .room-card-meta-value {
+      color:var(--hap-text); font-size:.84rem; font-weight:800; white-space:nowrap;
+    }
+    div[class*="st-key-room-card-selected-"] [data-testid="stVerticalBlockBorderWrapper"] {
+      border:1.5px solid color-mix(in srgb, #2563EB 58%, var(--hap-border)) !important;
+      background:linear-gradient(145deg, color-mix(in srgb, #2563EB 7%, var(--hap-surface)), var(--hap-surface)) !important;
     }
     div[class*="st-key-room-card-"] [data-testid="stBaseButton-secondary"],
     div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
-      width:104px !important; min-width:104px !important; min-height:40px !important;
-      height:40px !important; padding:.4rem .8rem !important; margin-left:auto !important;
-      border-radius:10px !important; font-size:.86rem !important; font-weight:750 !important;
+      width:92px !important; min-width:92px !important; max-width:92px !important;
+      min-height:38px !important; height:38px !important; padding:.4rem .8rem !important;
+      margin-left:auto !important; border-radius:11px !important;
+      font-size:.84rem !important; font-weight:750 !important;
     }
     div[class*="st-key-room-card-selected-"] [data-testid="stBaseButton-primary"]:disabled {
       opacity:1 !important; cursor:default !important;
@@ -1652,18 +1673,22 @@ def main():
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-name {
       font-size:1.18rem !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-details {
-      gap:14px !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta {
+      gap:7px !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-detail-label {
-      font-size:.76rem !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-item {
+      min-height:32px !important; padding:6px 9px !important; gap:6px !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-detail-value {
-      font-size:.88rem !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-label {
+      font-size:.72rem !important;
+    }
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-value {
+      font-size:.79rem !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-secondary"],
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
-      min-height:36px !important; height:36px !important; width:92px !important; min-width:92px !important;
+      min-height:36px !important; height:36px !important; width:88px !important;
+      min-width:88px !important; max-width:88px !important;
     }
 
     @media (max-width: 680px) {
