@@ -937,7 +937,7 @@ def show_schedule_input(room, user_id, windows):
             )
             # 양쪽 여백 열을 둬서 버튼 두 개가 패널 중앙에 함께 모이게 한다.
             _left_space, yes_col, _button_gap, no_col, _right_space = st.columns(
-                [1, 0.6, 0.08, 0.6, 1], gap="small", vertical_alignment="center"
+                [0.55, 0.88, 0.12, 0.88, 0.55], gap="small", vertical_alignment="center"
             )
             with yes_col:
                 if st.button(
@@ -1102,10 +1102,10 @@ def _blend_status_colors(values: list[str], include_unavailable: bool = True) ->
 def show_overview(room, members, windows):
     st.subheader("합주 가능 시간")
     mode = st.segmented_control(
-        "표시 방식", ["전체 합주 가능 시간", "모두"],
-        default="전체 합주 가능 시간", key=f"overview_filter_{room['id']}",
+        "표시 방식", ["전원 합주 가능 시간", "모두"],
+        default="전원 합주 가능 시간", key=f"overview_filter_{room['id']}",
         label_visibility="collapsed", width="stretch",
-    ) or "전체 합주 가능 시간"
+    ) or "전원 합주 가능 시간"
 
     # Session filter stays tucked into an icon popover rather than taking permanent space.
     available_sessions = sorted({str(m.get("session") or "미지정") for m in members}, key=lambda x: (DEFAULT_SESSIONS.index(x) if x in DEFAULT_SESSIONS else 99, x))
@@ -1166,7 +1166,7 @@ def show_overview(room, members, windows):
             all_possible = bool(filtered_members) and missing == 0 and not has_unavailable
             if all_possible:
                 possible_slots += 1
-            if mode == "전체 합주 가능 시간" and has_unavailable:
+            if mode == "전원 합주 가능 시간" and has_unavailable:
                 statuses[key] = "__masked__"
             elif selected_sessions:
                 mixed = _blend_status_colors(received, include_unavailable=(mode == "모두"))
@@ -1323,15 +1323,19 @@ def show_my_rooms(user_id: str):
                     </div>''',
                     unsafe_allow_html=True,
                 )
-                if st.button(
-                    "선택됨" if is_selected else "이동",
-                    type="primary" if is_selected else "secondary",
-                    disabled=is_selected,
-                    use_container_width=False,
-                    key=f"room_open_{room_id}",
-                ):
-                    st.session_state["active_room_id"] = room_id
-                    st.rerun()
+                _action_spacer, action_col = st.columns(
+                    [1, 0.48], gap="small", vertical_alignment="center"
+                )
+                with action_col:
+                    if st.button(
+                        "선택됨" if is_selected else "이동",
+                        type="primary" if is_selected else "secondary",
+                        disabled=is_selected,
+                        use_container_width=True,
+                        key=f"room_open_{room_id}",
+                    ):
+                        st.session_state["active_room_id"] = room_id
+                        st.rerun()
 
     return next(r for r in rooms if str(r["id"]) == current)
 
@@ -1557,17 +1561,25 @@ def main():
     [data-testid="stFormSubmitButton"] button:hover {
       background:#1D4ED8 !important; border-color:#1D4ED8 !important;
     }
-    /* Force the Streamlit selection accent to blue, including BaseWeb states. */
+    /* Force Streamlit and BaseWeb interactive states to use the blue accent. */
     :root, body, .stApp, [data-testid="stApp"],
     [data-testid="stAppViewContainer"], [data-testid="stMain"] {
       --primary-color:#2563EB !important;
       --st-primary-color:#2563EB !important;
       --color-primary:#2563EB !important;
+      --primary-50:#EFF6FF !important;
+      --primary-100:#DBEAFE !important;
       --primary-600:#2563EB !important;
       --primary-700:#1D4ED8 !important;
       --color-primary-light:#DBEAFE !important;
       --color-primary-dark:#1D4ED8 !important;
+      --st-color-primary:#2563EB !important;
+      --st-color-primary-bg:#EFF6FF !important;
+      --st-color-primary-hover:#1D4ED8 !important;
+      --st-color-primary-active:#1E40AF !important;
     }
+
+    /* Selected segmented-control buttons and their hover/focus states. */
     [data-testid="stSegmentedControl"] button[aria-pressed="true"],
     [data-testid="stSegmentedControl"] button[aria-checked="true"],
     [data-testid="stSegmentedControl"] button[aria-selected="true"],
@@ -1575,52 +1587,135 @@ def main():
     [data-testid="stSegmentedControl"] button[data-state="checked"],
     [data-testid="stBaseButton-segmented_controlActive"],
     [data-testid="stBaseButton-segmented_controlActive"]:hover,
+    [data-testid="stBaseButton-segmented_controlActive"]:focus,
     [data-testid="stBaseButton-segmented_controlActive"]:focus-visible,
-    [data-baseweb="button-group"] button[aria-pressed="true"],
-    [data-baseweb="button-group"] button[aria-checked="true"],
+    [data-baseweb="button-group"] button[kind="segmented_controlActive"],
+    [data-baseweb="button-group"] button[kind="segmented_controlActive"]:hover,
     div.st-key-main_section_radio [aria-pressed="true"],
     div.st-key-main_section_radio [aria-checked="true"],
     div.st-key-main_section_radio [aria-selected="true"],
     div.st-key-main_section_radio [data-selected="true"],
     div.st-key-main_section_radio [data-state="checked"] {
-      background:#2563EB !important; background-color:#2563EB !important;
-      border-color:#2563EB !important; color:#fff !important;
+      background:#2563EB !important;
+      background-color:#2563EB !important;
+      border-color:#2563EB !important;
+      color:#FFFFFF !important;
+      box-shadow:0 1px 3px rgba(37,99,235,.24) !important;
     }
-    [data-testid="stTabs"] [role="tab"][aria-selected="true"],
-    [data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"],
-    .stTabs [role="tab"][aria-selected="true"],
+    [data-testid="stSegmentedControl"] button:hover:not([aria-pressed="true"]):not([aria-checked="true"]),
+    [data-testid="stSegmentedControl"] button:focus-visible:not([aria-pressed="true"]),
+    [data-baseweb="button-group"] button:hover:not([kind="segmented_controlActive"]),
+    div.st-key-main_section_radio button:hover:not([aria-pressed="true"]):not([aria-checked="true"]) {
+      color:#1D4ED8 !important;
+      background:color-mix(in srgb, #2563EB 10%, var(--hap-surface)) !important;
+      background-color:color-mix(in srgb, #2563EB 10%, var(--hap-surface)) !important;
+      border-color:color-mix(in srgb, #2563EB 38%, var(--hap-border)) !important;
+    }
+
+    /* Tabs: the moving highlight is separate from the full-width bottom track. */
+    .stTabs [data-baseweb="tab"],
+    [data-testid="stTabs"] [role="tab"] {
+      transition:color .14s ease, background-color .14s ease, border-color .14s ease !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover,
+    .stTabs [role="tab"]:hover,
+    [data-testid="stTabs"] [role="tab"]:hover {
+      color:#1D4ED8 !important;
+      background:color-mix(in srgb, #2563EB 7%, var(--hap-surface)) !important;
+      background-color:color-mix(in srgb, #2563EB 7%, var(--hap-surface)) !important;
+    }
     .stTabs [data-baseweb="tab"][aria-selected="true"],
-    button[role="tab"][aria-selected="true"] {
-      color:#2563EB !important; border-bottom-color:#2563EB !important;
+    .stTabs [role="tab"][aria-selected="true"],
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"],
+    [data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] {
+      color:#2563EB !important;
+      border-bottom-color:#2563EB !important;
     }
-    [data-testid="stTabs"] [data-baseweb="tab-highlight"],
-    [data-testid="stTabs"] [data-baseweb="tab-border"],
     .stTabs [data-baseweb="tab-highlight"],
+    [data-testid="stTabs"] [data-baseweb="tab-highlight"],
+    div[data-baseweb="tab-highlight"] {
+      background:#2563EB !important;
+      background-color:#2563EB !important;
+      border-color:#2563EB !important;
+    }
     .stTabs [data-baseweb="tab-border"],
-    div[data-baseweb="tab-highlight"],
+    [data-testid="stTabs"] [data-baseweb="tab-border"],
     div[data-baseweb="tab-border"] {
-      background-color:#2563EB !important; border-color:#2563EB !important;
+      background:var(--hap-border) !important;
+      background-color:var(--hap-border) !important;
     }
-    [data-testid="stTabs"] [role="tab"][aria-selected="true"]::after,
-    .stTabs [role="tab"][aria-selected="true"]::after {
-      background:#2563EB !important; border-color:#2563EB !important;
+    .stTabs [data-baseweb="tab-highlight"]::after,
+    .stTabs [data-baseweb="tab-highlight"]::before {
+      background:#2563EB !important;
+      border-color:#2563EB !important;
     }
-    [data-testid="stCheckbox"] input:checked + div, [data-testid="stRadio"] input:checked + div,
+    .stTabs [role="tab"][aria-selected="true"]::after,
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"]::after {
+      background:#2563EB !important;
+      border-color:#2563EB !important;
+    }
+
+    /* Dropdown, multiselect, date-picker and calendar hover/active states. */
+    [data-baseweb="menu"] [role="option"]:hover,
+    [data-baseweb="menu"] [role="option"][aria-selected="true"],
+    [data-baseweb="popover"] [role="option"]:hover,
+    [data-baseweb="popover"] [role="option"][aria-selected="true"],
+    [data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover,
+    [data-testid="stMultiSelect"] [role="option"]:hover {
+      background:color-mix(in srgb, #2563EB 12%, var(--hap-surface)) !important;
+      background-color:color-mix(in srgb, #2563EB 12%, var(--hap-surface)) !important;
+      color:var(--hap-text) !important;
+    }
+    [data-baseweb="calendar"] [aria-selected="true"],
+    [data-baseweb="calendar"] button[aria-pressed="true"],
+    [data-baseweb="calendar"] button[aria-selected="true"] {
+      background:#2563EB !important;
+      background-color:#2563EB !important;
+      color:#FFFFFF !important;
+    }
+    [data-baseweb="calendar"] button:hover:not([aria-selected="true"]),
+    [data-baseweb="calendar"] [role="button"]:hover:not([aria-selected="true"]) {
+      background:color-mix(in srgb, #2563EB 12%, var(--hap-surface)) !important;
+      color:#1D4ED8 !important;
+    }
+
+    /* Checkboxes, radio controls, sliders and focused inputs. */
+    [data-testid="stCheckbox"] input:checked + div,
+    [data-testid="stRadio"] input:checked + div,
     [data-testid="stCheckbox"] label:has(input:checked) > div,
     [data-testid="stRadio"] label:has(input:checked) > div,
     [data-baseweb="checkbox"] [aria-checked="true"],
     [data-baseweb="radio"] [aria-checked="true"] {
-      border-color:#2563EB !important; background-color:#2563EB !important;
+      border-color:#2563EB !important;
+      background-color:#2563EB !important;
       accent-color:#2563EB !important;
     }
-    [data-baseweb="select"]:focus-within, [data-baseweb="input"]:focus-within,
-    [data-baseweb="textarea"]:focus-within, [data-testid="stTextInput"] input:focus,
-    [data-testid="stDateInput"] input:focus {
-      border-color:#2563EB !important; box-shadow:0 0 0 1px #2563EB !important;
+    [data-testid="stCheckbox"] label:hover,
+    [data-testid="stRadio"] label:hover,
+    [data-baseweb="checkbox"]:hover,
+    [data-baseweb="radio"]:hover {
+      color:#1D4ED8 !important;
     }
-    button:focus-visible, [role="tab"]:focus-visible { outline-color:#2563EB !important; }
+    [data-testid="stSlider"] [role="slider"],
+    [data-testid="stSlider"] [role="slider"]:focus,
+    [data-testid="stSlider"] [role="slider"]:focus-visible {
+      border-color:#2563EB !important;
+      box-shadow:0 0 0 2px color-mix(in srgb, #2563EB 22%, transparent) !important;
+    }
+    [data-baseweb="select"]:focus-within,
+    [data-baseweb="input"]:focus-within,
+    [data-baseweb="textarea"]:focus-within,
+    [data-testid="stTextInput"] input:focus,
+    [data-testid="stDateInput"] input:focus {
+      border-color:#2563EB !important;
+      box-shadow:0 0 0 1px #2563EB !important;
+    }
+    button:focus-visible, [role="tab"]:focus-visible {
+      outline-color:#2563EB !important;
+    }
     a, [data-testid="stMarkdownContainer"] a { color:#2563EB; }
-    [data-baseweb="checkbox"] [aria-checked="true"], [data-baseweb="radio"] [aria-checked="true"] {
+    [data-baseweb="checkbox"] [aria-checked="true"],
+    [data-baseweb="radio"] [aria-checked="true"] {
       border-color:#2563EB !important;
     }
 
@@ -1641,6 +1736,20 @@ def main():
       color:#2563EB !important;
     }
     [data-testid="stBaseButton-primary"] { box-shadow:3px 3px 8px rgba(37,99,235,.18) !important; }
+    [data-testid="stButton"] button:hover:not(:disabled),
+    [data-testid="stFormSubmitButton"] button:hover:not(:disabled),
+    [data-testid="stDownloadButton"] button:hover:not(:disabled),
+    [data-testid="stBaseButton-secondary"]:hover:not(:disabled) {
+      border-color:#2563EB !important;
+      outline-color:color-mix(in srgb, #2563EB 35%, transparent) !important;
+    }
+    [data-testid="stButton"] button:focus-visible:not(:disabled),
+    [data-testid="stFormSubmitButton"] button:focus-visible:not(:disabled),
+    [data-testid="stDownloadButton"] button:focus-visible:not(:disabled) {
+      outline:2px solid #2563EB !important;
+      outline-offset:2px !important;
+      box-shadow:0 0 0 2px color-mix(in srgb, #2563EB 16%, transparent) !important;
+    }
 
     .room-current-state {
       text-align:center; padding:.48rem .35rem; border-radius:10px;
@@ -1652,6 +1761,8 @@ def main():
 
     /* Bulk actions: centered heading above a compact horizontal pair of buttons. */
     div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] {
+      width:100% !important; max-width:840px !important;
+      margin-left:auto !important; margin-right:0 !important;
       min-height:116px !important; box-sizing:border-box !important;
       display:flex !important; align-items:center !important; justify-content:center !important;
       padding:13px 14px 12px !important; border-radius:14px !important;
@@ -1662,7 +1773,10 @@ def main():
     }
     div[class*="st-key-bulk-family-"] [data-testid="stHorizontalBlock"] {
       width:100% !important; align-items:center !important; justify-content:center !important;
-      gap:12px !important;
+      gap:10px !important;
+    }
+    div[class*="st-key-bulk-family-"] [data-testid="stBaseButton-secondary"] {
+      max-width:100% !important; min-width:0 !important;
     }
     .schedule-tools-heading {
       display:flex; align-items:center; justify-content:center;
@@ -1743,7 +1857,7 @@ def main():
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
       width:100% !important; height:100% !important; min-height:100% !important;
-      box-sizing:border-box !important; padding:19px 21px 15px !important;
+      box-sizing:border-box !important; padding:22px 24px 16px !important;
       display:flex !important; flex-direction:column !important;
       justify-content:space-between !important; gap:8px !important;
     }
@@ -1751,29 +1865,42 @@ def main():
       flex:1 1 auto !important; width:100% !important; min-height:0 !important;
       display:flex !important; align-items:center !important; margin:0 !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child {
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"]:last-child {
       flex:0 0 auto !important; width:100% !important; margin:0 !important;
       display:flex !important; justify-content:flex-end !important; align-items:center !important;
     }
+    div[class*="st-key-room-card-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child {
+      flex:1 1 auto !important; min-width:0 !important;
+    }
+    div[class*="st-key-room-card-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {
+      flex:0 0 32.5% !important; min-width:0 !important;
+      display:flex !important; justify-content:flex-end !important;
+    }
+    div[class*="st-key-room-card-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child [data-testid="stButton"] {
+      width:100% !important; display:flex !important; justify-content:flex-end !important;
+    }
     div[class*="st-key-room-card-"] .room-card-content {
       display:flex !important; flex:1 1 auto !important; flex-direction:column !important;
-      justify-content:center !important; gap:17px !important;
+      align-items:flex-start !important; justify-content:center !important; gap:18px !important;
       width:100% !important; height:140px !important; min-height:140px !important;
       box-sizing:border-box !important;
     }
     div[class*="st-key-room-card-"] .room-card-name {
-      color:var(--hap-text); font-size:1.34rem; line-height:1.28;
+      width:100%; color:var(--hap-text); font-size:1.34rem; line-height:1.3;
       font-weight:800; letter-spacing:-.045em; overflow-wrap:anywhere;
       display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
     }
     div[class*="st-key-room-card-"] .room-card-meta {
-      display:flex; align-items:center; flex-wrap:wrap; gap:9px;
+      display:flex; align-items:center; flex-wrap:wrap; gap:17px;
+      min-height:22px; width:100%;
     }
     div[class*="st-key-room-card-"] .room-card-meta-item {
-      display:inline-flex; align-items:center; gap:8px; min-height:35px;
-      box-sizing:border-box; padding:7px 11px; border-radius:10px;
-      background:color-mix(in srgb, #2563EB 6%, var(--hap-surface));
-      border:1px solid color-mix(in srgb, #2563EB 16%, var(--hap-border));
+      display:inline-flex; align-items:baseline; gap:7px; min-height:0;
+      box-sizing:border-box; padding:0; border:0 !important; border-radius:0;
+      background:transparent !important; box-shadow:none !important;
+    }
+    div[class*="st-key-room-card-"] .room-card-meta-item + .room-card-meta-item {
+      padding-left:16px; border-left:1px solid var(--hap-border) !important;
     }
     div[class*="st-key-room-card-"] .room-card-meta-label {
       color:var(--hap-muted); font-size:.76rem; font-weight:650; white-space:nowrap;
@@ -1808,10 +1935,13 @@ def main():
       font-size:1.18rem !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta {
-      gap:7px !important;
+      gap:13px !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-item {
-      min-height:32px !important; padding:6px 9px !important; gap:6px !important;
+      min-height:0 !important; padding:0 !important; gap:6px !important;
+    }
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-item + .room-card-meta-item {
+      padding-left:12px !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-label {
       font-size:.72rem !important;
@@ -1823,6 +1953,9 @@ def main():
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
       min-height:36px !important; height:36px !important; width:88px !important;
       min-width:88px !important; max-width:88px !important;
+    }
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {
+      flex-basis:31% !important;
     }
 
     @media (max-width: 680px) {
