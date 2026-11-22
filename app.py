@@ -1959,12 +1959,12 @@ def main():
       right:24px !important;
       width:auto !important;
       max-width:none !important;
-      height:auto !important;
-      min-height:0 !important;
-      max-height:calc(100% - 82px) !important;
+      height:132px !important;
+      min-height:132px !important;
+      max-height:none !important;
       margin:0 !important;
       padding:0 !important;
-      overflow:hidden !important;
+      overflow:visible !important;
       box-sizing:border-box !important;
     }
     div[class*="st-key-room-card-"] .room-card-content {
@@ -1977,7 +1977,8 @@ def main():
       height:auto !important;
       min-height:0 !important;
       margin:0 !important;
-      padding:0 !important;
+      padding:2px 0 4px !important;
+      overflow:visible !important;
       box-sizing:border-box !important;
     }
     div[class*="st-key-room-card-"] .room-card-name {
@@ -1999,9 +2000,13 @@ def main():
       align-items:center;
       flex-wrap:wrap;
       gap:17px;
-      min-height:22px;
+      min-height:28px;
       width:100%;
       margin:0 !important;
+      padding:2px 0 3px !important;
+      overflow:visible !important;
+      line-height:1.4 !important;
+      box-sizing:border-box !important;
     }
     div[class*="st-key-room-card-"] .room-card-meta-item {
       display:inline-flex;
@@ -2020,16 +2025,22 @@ def main():
       border-left:1px solid var(--hap-border) !important;
     }
     div[class*="st-key-room-card-"] .room-card-meta-label {
+      display:inline-block;
       color:var(--hap-muted);
       font-size:.76rem;
       font-weight:650;
+      line-height:1.4 !important;
       white-space:nowrap;
+      overflow:visible !important;
     }
     div[class*="st-key-room-card-"] .room-card-meta-value {
+      display:inline-block;
       color:var(--hap-text);
       font-size:.84rem;
       font-weight:800;
+      line-height:1.4 !important;
       white-space:nowrap;
+      overflow:visible !important;
     }
 
     /* Target the keyed button widget itself; never depend on Streamlit child order. */
@@ -2093,7 +2104,10 @@ def main():
       top:18px !important;
       left:17px !important;
       right:17px !important;
-      max-height:calc(100% - 70px) !important;
+      height:112px !important;
+      min-height:112px !important;
+      max-height:none !important;
+      overflow:visible !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room_open_"] {
       right:17px !important;
