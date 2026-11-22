@@ -1257,16 +1257,6 @@ def show_my_rooms(user_id: str):
 
     expanded_key = "_hapjugi_rooms_expanded"
     expanded = bool(st.session_state.get(expanded_key, False))
-    title_col, toggle_col = st.columns([8, 1], vertical_alignment="center")
-    title_col.markdown("#### 내 합주실")
-    if toggle_col.button(
-        "접기" if expanded else "펼치기",
-        use_container_width=False,
-        key="toggle_room_list_layout",
-    ):
-        st.session_state[expanded_key] = not expanded
-        st.rerun()
-
     ids = [str(r["id"]) for r in rooms]
     current = str(st.session_state.get("active_room_id") or "")
     if current not in ids:
@@ -1276,66 +1266,83 @@ def show_my_rooms(user_id: str):
     card_width, card_height = (320, 198) if expanded else (362, 224)
     carousel_key = "room-carousel-expanded" if expanded else "room-carousel"
 
-    # This must remain a horizontal Streamlit container. CSS only controls
-    # nowrap/scroll in the collapsed state and wrapping in the expanded state.
-    with st.container(
-        key=carousel_key,
-        horizontal=True,
-        horizontal_alignment="left",
-        vertical_alignment="center",
-        gap="medium",
-    ):
-        for idx, room in enumerate(rooms):
-            room_id = str(room["id"])
-            is_selected = room_id == current
-            members = room.get("_members") or []
-            member_count = len(members)
-            my_member = next(
-                (member for member in members if str(member.get("user_id")) == str(user_id)),
-                room.get("my_membership", {}),
-            )
-            my_session = session_display_map(members).get(
-                str(user_id), str(my_member.get("session") or "미지정")
-            )
-            safe_room_name = html.escape(str(room.get("room_name") or "이름 없는 합주실"))
-            safe_session = html.escape(my_session)
-            card_key = f"room-card-selected-{idx}" if is_selected else f"room-card-{idx}"
+    # Keep the heading and card row in one layout group so their spacing and
+    # horizontal alignment can be controlled together.
+    with st.container(key="room-selector-layout"):
+        title_col, toggle_col = st.columns([8, 1], vertical_alignment="center")
+        title_col.markdown("#### 내 합주실")
+        if toggle_col.button(
+            "접기" if expanded else "펼치기",
+            use_container_width=False,
+            key="toggle_room_list_layout",
+        ):
+            st.session_state[expanded_key] = not expanded
+            st.rerun()
 
-            with st.container(
-                key=card_key,
-                border=True,
-                width=card_width,
-                height=card_height,
-            ):
-                st.markdown(
-                    f'''<div class="room-card-content">
-                        <div class="room-card-name">{safe_room_name}</div>
-                        <div class="room-card-meta">
-                            <div class="room-card-meta-item">
-                                <span class="room-card-meta-label">멤버</span>
-                                <strong class="room-card-meta-value">{member_count}명</strong>
-                            </div>
-                            <div class="room-card-meta-item">
-                                <span class="room-card-meta-label">내 세션</span>
-                                <strong class="room-card-meta-value">{safe_session}</strong>
-                            </div>
-                        </div>
-                    </div>''',
-                    unsafe_allow_html=True,
+        # This must remain a horizontal Streamlit container. CSS only controls
+        # nowrap/scroll in the collapsed state and wrapping in the expanded state.
+        with st.container(
+            key=carousel_key,
+            horizontal=True,
+            horizontal_alignment="left",
+            vertical_alignment="center",
+            gap="medium",
+        ):
+            for idx, room in enumerate(rooms):
+                room_id = str(room["id"])
+                is_selected = room_id == current
+                members = room.get("_members") or []
+                member_count = len(members)
+                my_member = next(
+                    (member for member in members if str(member.get("user_id")) == str(user_id)),
+                    room.get("my_membership", {}),
                 )
-                _action_spacer, action_col = st.columns(
-                    [1, 0.48], gap="small", vertical_alignment="center"
+                my_session = session_display_map(members).get(
+                    str(user_id), str(my_member.get("session") or "미지정")
                 )
-                with action_col:
-                    if st.button(
-                        "선택됨" if is_selected else "이동",
-                        type="primary" if is_selected else "secondary",
-                        disabled=is_selected,
-                        use_container_width=True,
-                        key=f"room_open_{room_id}",
+                safe_room_name = html.escape(str(room.get("room_name") or "이름 없는 합주실"))
+                safe_session = html.escape(my_session)
+                card_key = f"room-card-selected-{idx}" if is_selected else f"room-card-{idx}"
+
+                with st.container(
+                    key=card_key,
+                    border=True,
+                    width=card_width,
+                    height=card_height,
+                ):
+                    st.markdown(
+                        f'''<div class="room-card-content">
+                            <div class="room-card-name">{safe_room_name}</div>
+                            <div class="room-card-meta">
+                                <div class="room-card-meta-item">
+                                    <span class="room-card-meta-label">멤버</span>
+                                    <strong class="room-card-meta-value">{member_count}명</strong>
+                                </div>
+                                <div class="room-card-meta-item">
+                                    <span class="room-card-meta-label">내 세션</span>
+                                    <strong class="room-card-meta-value">{safe_session}</strong>
+                                </div>
+                            </div>
+                        </div>''',
+                        unsafe_allow_html=True,
+                    )
+                    # A dedicated right-aligned horizontal container avoids
+                    # relying on column widths to position the action button.
+                    with st.container(
+                        key=f"room-card-actions-{idx}",
+                        horizontal=True,
+                        horizontal_alignment="right",
+                        vertical_alignment="center",
                     ):
-                        st.session_state["active_room_id"] = room_id
-                        st.rerun()
+                        if st.button(
+                            "선택됨" if is_selected else "이동",
+                            type="primary" if is_selected else "secondary",
+                            disabled=is_selected,
+                            use_container_width=False,
+                            key=f"room_open_{room_id}",
+                        ):
+                            st.session_state["active_room_id"] = room_id
+                            st.rerun()
 
     return next(r for r in rooms if str(r["id"]) == current)
 
@@ -1795,7 +1802,22 @@ def main():
       display:flex !important; justify-content:stretch !important; width:100% !important;
     }
 
-    /* Room selector: keep cards in one horizontal scrolling row by default. */
+    /* Room selector: balanced heading/card spacing and consistent left alignment. */
+    div.st-key-room-selector-layout {
+      width:100% !important; max-width:100% !important;
+      margin-top:-.25rem !important; gap:.35rem !important;
+    }
+    div.st-key-room-selector-layout > [data-testid="stVerticalBlock"] {
+      gap:.35rem !important;
+    }
+    div.st-key-room-selector-layout [data-testid="stMarkdownContainer"] h4 {
+      margin:0 !important; padding:0 !important; line-height:1.2 !important;
+    }
+    div.st-key-room-selector-layout > [data-testid="stHorizontalBlock"]:first-child,
+    div.st-key-room-selector-layout > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"]:first-child {
+      padding:0 4px !important; margin:0 !important; box-sizing:border-box !important;
+      align-items:center !important;
+    }
     div.st-key-toggle_room_list_layout {
       display:flex !important; justify-content:flex-end !important; align-items:center !important;
     }
@@ -1806,10 +1828,10 @@ def main():
     }
     div.st-key-room-carousel {
       display:flex !important; flex-direction:row !important; flex-wrap:nowrap !important;
-      align-items:stretch !important; justify-content:flex-start !important;
+      align-items:stretch !important; justify-content:safe center !important;
       gap:16px !important; width:100% !important; max-width:100% !important;
       overflow-x:auto !important; overflow-y:hidden !important;
-      padding:8px 4px 18px !important; box-sizing:border-box !important;
+      padding:4px 4px 14px !important; box-sizing:border-box !important;
       scroll-snap-type:x mandatory !important; scrollbar-width:thin !important;
       overscroll-behavior-x:contain !important; touch-action:pan-x pan-y !important;
     }
@@ -1825,9 +1847,9 @@ def main():
     }
     div.st-key-room-carousel-expanded {
       display:flex !important; flex-direction:row !important; flex-wrap:wrap !important;
-      align-items:stretch !important; justify-content:flex-start !important;
+      align-items:stretch !important; justify-content:center !important;
       gap:16px !important; width:100% !important; max-width:100% !important;
-      overflow:visible !important; padding:8px 4px 12px !important; box-sizing:border-box !important;
+      overflow:visible !important; padding:4px 4px 12px !important; box-sizing:border-box !important;
     }
     div.st-key-room-carousel-expanded > [data-testid="stElementContainer"],
     div.st-key-room-carousel-expanded > div:not([data-testid="stHorizontalBlock"]):not([data-testid="stVerticalBlock"]) {
@@ -1865,19 +1887,23 @@ def main():
       flex:1 1 auto !important; width:100% !important; min-height:0 !important;
       display:flex !important; align-items:center !important; margin:0 !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"]:last-child {
-      flex:0 0 auto !important; width:100% !important; margin:0 !important;
-      display:flex !important; justify-content:flex-end !important; align-items:center !important;
+    div[class*="st-key-room-card-actions-"] {
+      display:flex !important; flex:0 0 auto !important;
+      width:100% !important; min-width:100% !important; max-width:100% !important;
+      justify-content:flex-end !important; align-items:center !important; margin:0 !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child {
-      flex:1 1 auto !important; min-width:0 !important;
+    div[class*="st-key-room-card-actions-"][data-testid="stHorizontalBlock"],
+    div[class*="st-key-room-card-actions-"] [data-testid="stHorizontalBlock"] {
+      display:flex !important; width:100% !important; min-width:100% !important;
+      justify-content:flex-end !important; align-items:center !important;
+      gap:0 !important; margin:0 !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {
-      flex:0 0 32.5% !important; min-width:0 !important;
-      display:flex !important; justify-content:flex-end !important;
+    div[class*="st-key-room-card-actions-"] [data-testid="stElementContainer"] {
+      flex:0 0 auto !important; width:auto !important; margin-left:auto !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child [data-testid="stButton"] {
-      width:100% !important; display:flex !important; justify-content:flex-end !important;
+    div[class*="st-key-room-card-actions-"] [data-testid="stButton"] {
+      display:flex !important; width:92px !important; min-width:92px !important;
+      max-width:92px !important; justify-content:flex-end !important; margin-left:auto !important;
     }
     div[class*="st-key-room-card-"] .room-card-content {
       display:flex !important; flex:1 1 auto !important; flex-direction:column !important;
