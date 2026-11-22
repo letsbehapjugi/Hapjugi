@@ -361,19 +361,42 @@ def session_picker(prefix: str, members: list[dict[str, Any]] | None = None, def
 
 
 def get_availability(room_id: str, dates: list[date]) -> list[dict[str, Any]]:
+    """Load every availability row for the room/date range.
+
+    Supabase's Data API returns at most 1,000 rows by default. A normal
+    14-day schedule already has 1,344 quarter-hour slots for one member, so
+    a single unpaginated select silently omits later rows. Use deterministic
+    ordering and inclusive range pagination to retrieve the complete result.
+    """
     if not dates:
         return []
+
     start, end = dates[0].isoformat(), dates[-1].isoformat()
-    return (
-        SUPABASE.table("availability")
-        .select("id,user_id,date,time,status")
-        .eq("room_id", room_id)
-        .gte("date", start)
-        .lte("date", end)
-        .execute()
-        .data
-        or []
-    )
+    page_size = 500
+    offset = 0
+    all_rows: list[dict[str, Any]] = []
+
+    while True:
+        response = (
+            SUPABASE.table("availability")
+            .select("id,user_id,date,time,status")
+            .eq("room_id", room_id)
+            .gte("date", start)
+            .lte("date", end)
+            .order("date")
+            .order("time")
+            .order("user_id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        page = response.data or []
+        all_rows.extend(page)
+
+        if len(page) < page_size:
+            break
+        offset += len(page)
+
+    return all_rows
 
 
 def upsert_slot(room_id: str, user_id: str, selected_date: date, minute: int, status: str) -> None:
@@ -425,8 +448,14 @@ def bulk_set(
                 "time": slot,
                 "status": status,
             })
-    if rows:
-        SUPABASE.table("availability").upsert(rows, on_conflict="room_id,user_id,date,time").execute()
+    # Keep bulk application below the API's practical request-size limits.
+    # This can exceed 1,000 rows for a two-week schedule.
+    batch_size = 200
+    for start in range(0, len(rows), batch_size):
+        batch = rows[start:start + batch_size]
+        SUPABASE.table("availability").upsert(
+            batch, on_conflict="room_id,user_id,date,time"
+        ).execute()
 
 def create_room(room_name: str, display_name: str, password: str, start: date, end: date, windows: list[dict[str, Any]], session_name: str = "보컬") -> dict[str, Any]:
     code = make_room_code()
