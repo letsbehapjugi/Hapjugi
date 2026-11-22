@@ -923,34 +923,38 @@ def show_schedule_input(room, user_id, windows):
     elif saved_notice:
         st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
 
-    # 상위 기능은 좌우 1:1, 일괄 설정의 두 선택지만 왼쪽 영역 안에 둔다.
-    bulk_heading_col, clear_action_col = st.columns(2, gap="large")
-    with bulk_heading_col:
-        st.markdown('<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>', unsafe_allow_html=True)
+    # 좌우 1:1 구조: 왼쪽은 일괄 설정(버튼-제목-버튼), 오른쪽은 전체 삭제.
+    bulk_col, clear_col = st.columns(2, gap="large", vertical_alignment="center")
     reset_token_key = f"schedule_reset_{room['id']}"
-    with clear_action_col:
-        if st.button("내 일정 전체 지우기", use_container_width=True,
-                      key=f"bulk_clear_{room['id']}", type="secondary"):
-            confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
+    mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
 
-    bulk_action_col, _empty_action_col = st.columns(2, gap="large")
-    with bulk_action_col:
-        b1, b2 = st.columns(2, gap="small")
-        mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
-        if b1.button("합주 완전 가능", use_container_width=True, key=f"bulk_yes_{room['id']}"):
-            try:
-                written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
-                st.session_state[notice_key] = written
-                st.rerun()
-            except Exception as exc:
-                st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
-        if b2.button("합주 완전 불가", use_container_width=True, key=f"bulk_no_{room['id']}"):
-            try:
-                written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
-                st.session_state[notice_key] = written
-                st.rerun()
-            except Exception as exc:
-                st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+    with bulk_col:
+        with st.container(key=f"bulk-family-{room['id']}"):
+            if st.button("합주 완전 가능", use_container_width=True,
+                         key=f"bulk_yes_{room['id']}"):
+                try:
+                    written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
+                    st.session_state[notice_key] = written
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+            st.markdown(
+                '<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("합주 완전 불가능", use_container_width=True,
+                         key=f"bulk_no_{room['id']}"):
+                try:
+                    written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
+                    st.session_state[notice_key] = written
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+
+    with clear_col:
+        if st.button("내 일정 전체 지우기", use_container_width=True,
+                     key=f"bulk_clear_{room['id']}", type="secondary"):
+            confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
 
     reset_token_key = f"schedule_reset_{room['id']}"
     if reset_token_key not in st.session_state:
@@ -1361,7 +1365,7 @@ def main():
     [data-testid="stMarkdownContainer"] h1 a, [data-testid="stMarkdownContainer"] h2 a,
     [data-testid="stMarkdownContainer"] h3 a { display:none !important; visibility:hidden !important; }
 
-    :root {
+    :root, body, .stApp, [data-testid="stApp"], [data-testid="stAppViewContainer"] {
       --primary-color: #2563EB !important; --color-primary: #2563EB !important;
       --st-primary-color: #2563EB !important; --accent-color: #2563EB !important;
       --primary: #2563EB !important; --primary-50: #EFF6FF !important;
@@ -1370,38 +1374,47 @@ def main():
       --color-primary-dark: #1D4ED8 !important; --st-color-primary: #2563EB !important;
       --st-color-primary-bg: #EFF6FF !important; --st-color-primary-hover: #1D4ED8 !important;
       --st-color-primary-active: #1E40AF !important;
-      --hap-panel-gradient: linear-gradient(145deg, var(--secondary-background-color, #FFFFFF), color-mix(in srgb, var(--secondary-background-color, #FFFFFF) 90%, var(--background-color, #F7F9FD)));
-      --hap-button-gradient: linear-gradient(145deg, var(--secondary-background-color, #FFFFFF), color-mix(in srgb, var(--secondary-background-color, #FFFFFF) 88%, var(--background-color, #F1F5F9)));
-      --hap-shadow-raised: 5px 5px 14px rgba(30,41,59,.055), -4px -4px 12px rgba(255,255,255,.28);
-      --hap-shadow-inset: inset 2px 2px 5px rgba(30,41,59,.075), inset -2px -2px 5px rgba(255,255,255,.22);
-      --hap-heading: var(--text-color, #172554);
-      --hap-button-text: var(--text-color, #334155);
-      --hap-chip-bg: color-mix(in srgb, #2563EB 11%, var(--secondary-background-color, #FFFFFF));
-      --hap-chip-text: #1D4ED8;
-      --hap-track: var(--secondary-background-color, #EEF2F8);
-      --hap-border: rgba(148,163,184,.20);
+
+      /* Derive surfaces and shadows from Streamlit's active theme variables.
+         This works in both light and dark mode without relying on data-theme attributes. */
+      --hap-bg: var(--background-color, #F5F7FB);
+      --hap-surface: var(--secondary-background-color, #FFFFFF);
+      --hap-text: var(--text-color, #1F2937);
+      --hap-muted: color-mix(in srgb, var(--hap-text) 62%, var(--hap-surface));
+      --hap-panel-gradient: linear-gradient(145deg, var(--hap-surface), color-mix(in srgb, var(--hap-surface) 88%, var(--hap-bg)));
+      --hap-button-gradient: linear-gradient(145deg, var(--hap-surface), color-mix(in srgb, var(--hap-surface) 82%, var(--hap-bg)));
+      --hap-shadow-raised: 5px 5px 14px color-mix(in srgb, #000000 22%, transparent), -4px -4px 12px color-mix(in srgb, #FFFFFF 18%, transparent);
+      --hap-shadow-inset: inset 2px 2px 5px color-mix(in srgb, #000000 16%, transparent), inset -2px -2px 5px color-mix(in srgb, #FFFFFF 13%, transparent);
+      --hap-heading: var(--hap-text);
+      --hap-button-text: var(--hap-text);
+      --hap-chip-bg: color-mix(in srgb, #2563EB 15%, var(--hap-surface));
+      --hap-chip-text: var(--hap-text);
+      --hap-track: color-mix(in srgb, var(--hap-surface) 92%, var(--hap-bg));
+      --hap-border: color-mix(in srgb, var(--hap-text) 16%, transparent);
     }
-    /* Streamlit dark themes expose data-theme on the app/document depending on version. */
-    html[data-theme="dark"], body[data-theme="dark"], [data-theme="dark"] {
-      --hap-panel-gradient: linear-gradient(145deg, #272D38, #202630);
-      --hap-button-gradient: linear-gradient(145deg, #2B323E, #222832);
-      --hap-shadow-raised: 5px 5px 14px rgba(0,0,0,.28), -3px -3px 10px rgba(255,255,255,.025);
-      --hap-shadow-inset: inset 2px 2px 5px rgba(0,0,0,.22), inset -2px -2px 5px rgba(255,255,255,.025);
-      --hap-heading: #F1F5F9;
-      --hap-button-text: #E2E8F0;
-      --hap-chip-bg: rgba(37,99,235,.19);
-      --hap-chip-text: #93C5FD;
-      --hap-track: #222A35;
-      --hap-border: rgba(148,163,184,.18);
+    html, body, .stApp, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+      background: var(--hap-bg) !important;
+      color: var(--hap-text) !important;
     }
 
-    [data-testid="stAppViewContainer"] {
-      background: var(--background-color, #F5F7FB) !important;
-      color: var(--text-color, #1F2937) !important;
+    /* Main brand and navigation share the exact viewport center line. */
+    .app-brand-title {
+      width:100%; box-sizing:border-box; text-align:center; font-size:clamp(1.65rem, 3vw, 2.25rem);
+      font-weight:800; letter-spacing:-.055em; color:var(--hap-heading);
+      padding:.28rem 0 .78rem; margin:0 auto;
     }
+    div.st-key-main_section_radio { width:100% !important; max-width:none !important; margin:0 auto 1.35rem !important; }
+    div[data-testid="stSegmentedControl"] { width:100% !important; max-width:none !important; margin:0 auto 1.35rem !important; }
+    div[data-testid="stSegmentedControl"] > div {
+      width:100% !important; border-radius:14px; padding:4px;
+      background:var(--hap-track) !important; box-shadow:var(--hap-shadow-inset) !important;
+    }
+    div[data-testid="stSegmentedControl"] button { flex:1 1 0; justify-content:center; font-weight:650; border-radius:10px !important; }
+
+    /* Global action color is blue; timetable status colors remain semantic. */
     button[kind="primary"], [data-testid="stBaseButton-primary"],
     [data-testid="stFormSubmitButton"] button {
-      background: #2563EB !important; border-color: #2563EB !important; color:#fff !important;
+      background:#2563EB !important; border-color:#2563EB !important; color:#fff !important;
     }
     button[kind="primary"]:hover, [data-testid="stBaseButton-primary"]:hover,
     [data-testid="stFormSubmitButton"] button:hover {
@@ -1435,7 +1448,7 @@ def main():
       border-color:#2563EB !important;
     }
 
-    /* Low-contrast neumorphism, with shadows and surfaces adapted to the active theme. */
+    /* Light-touch neumorphism follows the active theme's own surfaces. */
     [data-testid="stVerticalBlockBorderWrapper"] {
       border:1px solid var(--hap-border) !important; border-radius:16px !important;
       background:var(--hap-panel-gradient) !important; box-shadow:var(--hap-shadow-raised) !important;
@@ -1453,56 +1466,64 @@ def main():
     }
     [data-testid="stBaseButton-primary"] { box-shadow:3px 3px 8px rgba(37,99,235,.18) !important; }
 
-    .app-brand-title {
-      width:100%; box-sizing:border-box; text-align:center; font-size:clamp(1.65rem, 3vw, 2.25rem);
-      font-weight:800; letter-spacing:-.055em; color:var(--hap-heading);
-      padding:.28rem 0 .78rem; margin:0 auto;
-    }
     .room-current-state {
       text-align:center; padding:.48rem .35rem; border-radius:10px;
       color:var(--hap-chip-text); font-weight:700; font-size:.88rem;
-      background:var(--hap-chip-bg); border:1px solid rgba(37,99,235,.18);
+      background:var(--hap-chip-bg); border:1px solid var(--hap-border);
       box-shadow:var(--hap-shadow-inset);
     }
+    .room-card-title { font-size:1.05rem; font-weight:750; line-height:1.35; color:var(--hap-text); }
+
+    /* Bulk-setting hierarchy: left family has two status actions with its title between;
+       the clear button on the right matches the full family's height. */
+    div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlock"] { gap:.45rem !important; }
     .schedule-tools-heading {
-      min-height:2.75rem; display:flex; align-items:center; box-sizing:border-box;
-      color:var(--text-color, #1F2937); font-size:1rem; font-weight:750; letter-spacing:-.02em;
+      min-height:2.65rem; display:flex; align-items:center; justify-content:center;
+      box-sizing:border-box; color:var(--hap-text); font-size:1rem; font-weight:750;
+      letter-spacing:-.02em; text-align:center; white-space:nowrap;
     }
-    .room-card-title { font-size:1.05rem; font-weight:750; line-height:1.35; color:var(--text-color, #1F2937); }
-    div.st-key-room-create-form, div.st-key-room-join-form {
-      width:100% !important; max-width:680px !important; margin-left:auto !important; margin-right:auto !important;
+    div[class*="st-key-bulk_clear_"] [data-testid="stBaseButton-secondary"] {
+      height:137px !important; min-height:137px !important; white-space:normal !important;
+      padding:1rem !important; font-weight:700;
     }
+
+    /* Fixed portrait cards: width:height = 1:1.618. Horizontal carousel by default. */
     div.st-key-room-carousel > div[data-testid="stVerticalBlock"] {
       display:flex !important; flex-flow:row nowrap !important; align-items:stretch !important;
       gap:14px !important; overflow-x:auto !important; overflow-y:hidden !important;
       padding:8px 5px 15px !important; scroll-snap-type:x mandatory; scrollbar-width:thin;
     }
     div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div {
-      flex:0 0 258px !important; width:258px !important; min-width:258px !important;
-      max-width:258px !important; scroll-snap-align:start;
+      flex:0 0 224px !important; width:224px !important; min-width:224px !important;
+      max-width:224px !important; scroll-snap-align:start;
     }
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] {
+      width:100% !important; height:362.4px !important; min-height:362.4px !important;
+      max-height:362.4px !important; aspect-ratio:1 / 1.618 !important; box-sizing:border-box !important;
+    }
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+      height:100% !important; min-height:100% !important;
+    }
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlock"] {
+      height:100% !important; display:flex !important; flex-direction:column !important;
+      justify-content:flex-start !important; gap:.7rem !important;
+    }
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlock"] > div:last-child { margin-top:auto !important; }
     div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
-      display:grid !important; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)) !important;
-      align-items:stretch !important; gap:14px !important;
+      display:grid !important; grid-template-columns:repeat(auto-fill, 224px) !important;
+      align-items:stretch !important; justify-content:center !important; gap:14px !important;
     }
     div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] > div {
-      min-width:0 !important; width:auto !important; max-width:none !important;
+      min-width:0 !important; width:224px !important; max-width:224px !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] { min-height:148px !important; }
-    div.st-key-main_section_radio { max-width:760px !important; width:100% !important; margin:0 auto 1.35rem !important; }
-    div[data-testid="stSegmentedControl"] { max-width:760px !important; width:100% !important; margin:0 auto 1.35rem !important; }
-    div[data-testid="stSegmentedControl"] > div {
-      width:100% !important; border-radius:14px; padding:4px;
-      background:var(--hap-track) !important; box-shadow:var(--hap-shadow-inset) !important;
-    }
-    div[data-testid="stSegmentedControl"] button { flex:1 1 0; justify-content:center; font-weight:650; border-radius:10px !important; }
     @media (max-width: 680px) {
+      div.st-key-main_section_radio, div[data-testid="stSegmentedControl"] { width:100% !important; }
       div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div {
-        flex-basis: min(78vw, 258px) !important; width:min(78vw, 258px) !important;
-        min-width:min(78vw, 258px) !important; max-width:min(78vw, 258px) !important;
+        flex-basis:224px !important; width:224px !important;
+        min-width:224px !important; max-width:224px !important;
       }
       div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
-        grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)) !important;
+        grid-template-columns:repeat(auto-fill, minmax(224px, 224px)) !important;
       }
     }
     </style>""", unsafe_allow_html=True)
@@ -1527,7 +1548,12 @@ def main():
     pending_section = st.session_state.pop("pending_main_section", None)
     if pending_section in ["내 합주실", "방 만들기", "방 참여하기"]:
         st.session_state["main_section_radio"] = pending_section
-    section=st.segmented_control('메뉴',['내 합주실','방 만들기','방 참여하기'],key='main_section_radio',label_visibility='collapsed')
+    nav_left, nav_center, nav_right = st.columns([1, 8, 1], gap="small")
+    with nav_center:
+        section = st.segmented_control(
+            '메뉴', ['내 합주실', '방 만들기', '방 참여하기'],
+            key='main_section_radio', label_visibility='collapsed'
+        )
     if section is None:
         section = '내 합주실'
     if section=='내 합주실':
