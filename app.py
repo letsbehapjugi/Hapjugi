@@ -636,10 +636,10 @@ def render_readonly_grid(dates, minutes, windows, statuses, titles=None) -> None
         rows.append(f"<tr>{''.join(cells)}</tr>")
     st.markdown("""
     <style>
-    .grid-wrap{overflow:auto;width:100%;border:1px solid var(--border-color,#d8dbe2);border-radius:10px;background:var(--background-color,#fff)}.grid{border-collapse:separate;border-spacing:0;width:100%;min-width:520px;table-layout:fixed;color:var(--text-color,#262730);background:var(--background-color,#fff)}
-    .grid th,.grid td{border-right:1px solid var(--border-color,#d8dbe2);border-bottom:1px solid var(--border-color,#d8dbe2);padding:0;text-align:center}.grid tr>*:last-child{border-right:0}.grid tbody tr:last-child>*{border-bottom:0}
-    .grid thead th{height:38px;background:var(--secondary-background-color,#f0f2f6);color:var(--text-color,#262730);position:sticky;top:0;z-index:2}.grid .time{width:78px;min-width:78px;text-align:right;padding-right:7px;background:var(--secondary-background-color,#f0f2f6);color:var(--text-color,#60646f);font-size:.72rem}
-    .grid .cell{height:16px}.grid .empty{background:var(--background-color,#fff)}.grid .blocked{background:var(--secondary-background-color,#dfe2e8)}.grid .fully-available{background:#00C853}.grid .maybe-available{background:#FFD600}.grid .uncomfortable{background:#FF6D00}.grid .unavailable{background:#F44336}
+    .grid-wrap{overflow:auto;width:100%;border:1px solid var(--hap-border);border-radius:10px;background:var(--hap-bg)}.grid{border-collapse:separate;border-spacing:0;width:100%;min-width:520px;table-layout:fixed;color:var(--hap-text);background:var(--hap-bg)}
+    .grid th,.grid td{border-right:1px solid var(--hap-border);border-bottom:1px solid var(--hap-border);padding:0;text-align:center}.grid tr>*:last-child{border-right:0}.grid tbody tr:last-child>*{border-bottom:0}
+    .grid thead th{height:38px;background:var(--hap-surface);color:var(--hap-text);position:sticky;top:0;z-index:2}.grid .time{width:78px;min-width:78px;text-align:right;padding-right:7px;background:var(--hap-surface);color:var(--hap-muted);font-size:.72rem}
+    .grid .cell{height:16px}.grid .empty{background:var(--hap-bg)}.grid .blocked{background:var(--hap-surface)}.grid .fully-available{background:#00C853}.grid .maybe-available{background:#FFD600}.grid .uncomfortable{background:#FF6D00}.grid .unavailable{background:#F44336}
     .legend{display:flex;flex-wrap:wrap;gap:7px 14px;margin:4px 0 10px;font-size:.82rem}.legend-item{display:inline-flex;align-items:center;gap:5px}.legend-item i{display:inline-block;width:13px;height:13px;border:1px solid #484f58;border-radius:3px}.blocked-swatch{background:#30363d}
     @media(max-width:700px){.grid{min-width:480px}.grid .cell{height:15px}.grid .time{width:64px;min-width:64px;font-size:.65rem}.grid thead th{height:34px;font-size:.75rem}}
     </style>
@@ -924,44 +924,56 @@ def show_schedule_input(room, user_id, windows):
     elif saved_notice:
         st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
 
-    # 일괄 설정 제목은 두 버튼 위 중앙에, 두 버튼은 가까운 간격으로 묶는다.
+    # 기존 가로 한 줄 구성으로 복원: 가능 버튼 - 설명 - 불가능 버튼.
     reset_token_key = f"schedule_reset_{room['id']}"
     mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
     bulk_col, clear_col = st.columns([2.2, 1], gap="large", vertical_alignment="center")
 
     with bulk_col:
         with st.container(key=f"bulk-family-{room['id']}", border=True):
-            st.markdown(
-                '<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>',
-                unsafe_allow_html=True,
+            yes_col, heading_col, no_col = st.columns(
+                [1, 1.15, 1], gap="small", vertical_alignment="center"
             )
-            with st.container(
-                key=f"bulk-actions-{room['id']}",
-                horizontal=True,
-                horizontal_alignment="center",
-                vertical_alignment="center",
-                gap="small",
-            ):
-                if st.button("합주 완전 가능", use_container_width=False,
-                             key=f"bulk_yes_{room['id']}"):
+            with yes_col:
+                if st.button(
+                    "합주 완전 가능", use_container_width=True,
+                    key=f"bulk_yes_{room['id']}"
+                ):
                     try:
-                        written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
+                        written = bulk_set(
+                            room['id'], user_id, dates, minutes, windows,
+                            STATUS_OPTIONS[0], mine
+                        )
                         st.session_state[notice_key] = written
                         st.rerun()
                     except Exception as exc:
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
-                if st.button("합주 완전 불가능", use_container_width=False,
-                             key=f"bulk_no_{room['id']}"):
+            with heading_col:
+                st.markdown(
+                    '<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>',
+                    unsafe_allow_html=True,
+                )
+            with no_col:
+                if st.button(
+                    "합주 완전 불가능", use_container_width=True,
+                    key=f"bulk_no_{room['id']}"
+                ):
                     try:
-                        written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
+                        written = bulk_set(
+                            room['id'], user_id, dates, minutes, windows,
+                            STATUS_OPTIONS[3], mine
+                        )
                         st.session_state[notice_key] = written
                         st.rerun()
                     except Exception as exc:
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
 
+    # 전체 삭제는 별도 테두리 컨테이너 없이, 한 줄 버튼으로 둔다.
     with clear_col:
-        if st.button("내 일정 전체\n지우기", type="tertiary", use_container_width=False,
-                     key=f"bulk_clear_{room['id']}"):
+        if st.button(
+            "내 일정 전체 지우기", use_container_width=True,
+            key=f"bulk_clear_{room['id']}", type="secondary"
+        ):
             confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
 
     if reset_token_key not in st.session_state:
@@ -1412,6 +1424,67 @@ def show_active_room(user_id: str):
 
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
+
+    # Read the actual appearance selected in Streamlit's settings menu.
+    # Streamlit 1.50+ exposes this as st.context.theme.type.
+    try:
+        active_theme = str(st.context.theme.type).lower()
+    except Exception:
+        active_theme = "light"
+
+    # Streamlit may report the previous appearance on the very first run of a
+    # browser session. One lightweight rerun lets the active setting settle.
+    if not st.session_state.get("_hapjugi_theme_initialized", False):
+        st.session_state["_hapjugi_theme_initialized"] = True
+        st.rerun()
+
+    is_dark_theme = active_theme == "dark"
+
+    if is_dark_theme:
+        theme_palette_css = """
+        <style>
+        :root {
+          color-scheme: dark !important;
+          --hap-bg: var(--st-background-color, #0E1117);
+          --hap-surface: var(--st-secondary-background-color, #1B2230);
+          --hap-text: var(--st-text-color, #F1F5F9);
+          --hap-muted: color-mix(in srgb, var(--hap-text) 68%, var(--hap-surface));
+          --hap-border: var(--st-border-color, rgba(226,232,240,.14));
+          --hap-panel-gradient: linear-gradient(145deg, var(--hap-surface), color-mix(in srgb, var(--hap-surface) 82%, var(--hap-bg)));
+          --hap-button-gradient: linear-gradient(145deg, color-mix(in srgb, var(--hap-surface) 92%, #FFFFFF), var(--hap-surface));
+          --hap-shadow-raised: 5px 5px 14px rgba(0,0,0,.42), -3px -3px 10px rgba(255,255,255,.025);
+          --hap-shadow-inset: inset 2px 2px 5px rgba(0,0,0,.42), inset -2px -2px 5px rgba(255,255,255,.025);
+          --hap-heading: var(--hap-text);
+          --hap-button-text: var(--hap-text);
+          --hap-chip-bg: color-mix(in srgb, #2563EB 20%, var(--hap-surface));
+          --hap-chip-text: var(--hap-text);
+          --hap-track: color-mix(in srgb, var(--hap-surface) 82%, var(--hap-bg));
+        }
+        </style>
+        """
+    else:
+        theme_palette_css = """
+        <style>
+        :root {
+          color-scheme: light !important;
+          --hap-bg: var(--st-background-color, #F5F7FB);
+          --hap-surface: var(--st-secondary-background-color, #FFFFFF);
+          --hap-text: var(--st-text-color, #1F2937);
+          --hap-muted: color-mix(in srgb, var(--hap-text) 62%, var(--hap-surface));
+          --hap-border: var(--st-border-color, color-mix(in srgb, var(--hap-text) 16%, transparent));
+          --hap-panel-gradient: linear-gradient(145deg, var(--hap-surface), color-mix(in srgb, var(--hap-surface) 88%, var(--hap-bg)));
+          --hap-button-gradient: linear-gradient(145deg, var(--hap-surface), color-mix(in srgb, var(--hap-surface) 82%, var(--hap-bg)));
+          --hap-shadow-raised: 5px 5px 14px rgba(31,41,55,.13), -4px -4px 12px rgba(255,255,255,.72);
+          --hap-shadow-inset: inset 2px 2px 5px rgba(31,41,55,.09), inset -2px -2px 5px rgba(255,255,255,.75);
+          --hap-heading: var(--hap-text);
+          --hap-button-text: var(--hap-text);
+          --hap-chip-bg: color-mix(in srgb, #2563EB 8%, var(--hap-surface));
+          --hap-chip-text: var(--hap-text);
+          --hap-track: color-mix(in srgb, var(--hap-surface) 92%, var(--hap-bg));
+        }
+        </style>
+        """
+    st.markdown(theme_palette_css, unsafe_allow_html=True)
     # Keep Streamlit's running/stale state from dimming the app during component events.
     st.markdown("""<style>
     [data-stale], [data-testid="stAppViewContainer"], [data-testid="stAppViewBlockContainer"],
@@ -1433,26 +1506,21 @@ def main():
       --st-color-primary-bg: #EFF6FF !important; --st-color-primary-hover: #1D4ED8 !important;
       --st-color-primary-active: #1E40AF !important;
 
-      /* Derive surfaces and shadows from Streamlit's active theme variables.
-         This works in both light and dark mode without relying on data-theme attributes. */
-      --hap-bg: var(--background-color, #F5F7FB);
-      --hap-surface: var(--secondary-background-color, #FFFFFF);
-      --hap-text: var(--text-color, #1F2937);
-      --hap-muted: color-mix(in srgb, var(--hap-text) 62%, var(--hap-surface));
-      --hap-panel-gradient: linear-gradient(145deg, var(--hap-surface), color-mix(in srgb, var(--hap-surface) 88%, var(--hap-bg)));
-      --hap-button-gradient: linear-gradient(145deg, var(--hap-surface), color-mix(in srgb, var(--hap-surface) 82%, var(--hap-bg)));
-      --hap-shadow-raised: 5px 5px 14px color-mix(in srgb, #000000 22%, transparent), -4px -4px 12px color-mix(in srgb, #FFFFFF 18%, transparent);
-      --hap-shadow-inset: inset 2px 2px 5px color-mix(in srgb, #000000 16%, transparent), inset -2px -2px 5px color-mix(in srgb, #FFFFFF 13%, transparent);
-      --hap-heading: var(--hap-text);
-      --hap-button-text: var(--hap-text);
-      --hap-chip-bg: color-mix(in srgb, #2563EB 15%, var(--hap-surface));
-      --hap-chip-text: var(--hap-text);
-      --hap-track: color-mix(in srgb, var(--hap-surface) 92%, var(--hap-bg));
-      --hap-border: color-mix(in srgb, var(--hap-text) 16%, transparent);
+      /* Surfaces are supplied by the mode-aware palette injected before this stylesheet. */
     }
-    html, body, .stApp, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+    html, body, .stApp, [data-testid="stApp"],
+    [data-testid="stAppViewContainer"], [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"], [data-testid="stAppViewBlockContainer"],
+    [data-testid="stAppViewBlockContainer"] > div, section.main {
+      background-color: var(--hap-bg) !important;
       background: var(--hap-bg) !important;
       color: var(--hap-text) !important;
+    }
+    [data-testid="stHeader"] {
+      background: var(--hap-bg) !important;
+    }
+    [data-testid="stVerticalBlock"], [data-testid="stHorizontalBlock"] {
+      color: var(--hap-text);
     }
 
     /* Main brand and navigation share the exact viewport center line. */
@@ -1532,53 +1600,31 @@ def main():
     }
     .room-card-title { font-size:1.05rem; font-weight:750; line-height:1.35; color:var(--hap-text); }
 
-    /* Bulk actions: a centered heading and a compact, centered button pair. */
+    /* Bulk actions: one horizontal row; the label sits between two wide actions. */
     div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] {
-      min-height:126px !important; box-sizing:border-box !important;
+      min-height:88px !important; box-sizing:border-box !important;
       display:flex !important; align-items:center !important; justify-content:center !important;
-      padding:14px 18px !important; border-radius:14px !important;
+      padding:12px 14px !important; border-radius:14px !important;
     }
     div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
       width:100% !important; min-height:0 !important; justify-content:center !important;
       align-items:stretch !important; gap:0 !important;
     }
     .schedule-tools-heading {
-      width:100%; margin:0 0 17px !important; padding:0 0 1px;
-      color:var(--hap-text); font-size:.96rem; font-weight:750;
+      display:flex; align-items:center; justify-content:center;
+      width:100%; min-height:48px; margin:0 !important; padding:0 7px;
+      color:var(--hap-text); font-size:.92rem; font-weight:750;
       letter-spacing:-.03em; text-align:center; line-height:1.3;
       white-space:normal; word-break:keep-all;
     }
-    div[class*="st-key-bulk-actions-"] {
-      display:flex !important; flex-direction:row !important; flex-wrap:nowrap !important;
-      align-items:center !important; justify-content:center !important;
-      gap:14px !important; width:100% !important; min-width:0 !important;
-    }
-    div[class*="st-key-bulk-actions-"] > [data-testid="stElementContainer"] {
-      flex:0 0 148px !important; width:148px !important; min-width:148px !important;
-      max-width:148px !important;
-    }
-    div[class*="st-key-bulk-actions-"] [data-testid="stButton"] {
-      display:flex !important; justify-content:center !important; width:148px !important;
-    }
-    div[class*="st-key-bulk-actions-"] [data-testid="stBaseButton-secondary"] {
-      width:148px !important; min-width:148px !important; max-width:148px !important;
-      min-height:48px !important; height:48px !important; white-space:normal !important;
-      line-height:1.2 !important; padding:.4rem .55rem !important; font-size:.9rem !important;
+    div[class*="st-key-bulk-family-"] [data-testid="stBaseButton-secondary"],
+    div[class*="st-key-bulk_clear_"] [data-testid="stBaseButton-secondary"] {
+      width:100% !important; min-height:48px !important; height:48px !important;
+      padding:.45rem .65rem !important; white-space:nowrap !important;
+      line-height:1.2 !important; font-size:.9rem !important;
     }
     div[class*="st-key-bulk_clear_"] [data-testid="stButton"] {
-      display:flex !important; justify-content:center !important; width:100% !important;
-    }
-    div[class*="st-key-bulk_clear_"] [data-testid="stBaseButton-tertiary"] {
-      width:108px !important; min-width:108px !important; max-width:108px !important;
-      min-height:68px !important; height:68px !important; white-space:pre-line !important;
-      line-height:1.25 !important; padding:.45rem .55rem !important; border:0 !important;
-      border-radius:11px !important; background:var(--hap-button-gradient) !important;
-      box-shadow:var(--hap-shadow-raised) !important; color:var(--hap-button-text) !important;
-      font-weight:700 !important; text-align:center !important;
-    }
-    div[class*="st-key-bulk_clear_"] [data-testid="stBaseButton-tertiary"] p {
-      text-align:center !important; white-space:pre-line !important;
-      line-height:1.22 !important; margin:0 !important;
+      display:flex !important; justify-content:stretch !important; width:100% !important;
     }
 
     /* Room selector: keep cards in one horizontal scrolling row by default. */
