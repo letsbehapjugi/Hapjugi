@@ -360,43 +360,146 @@ def session_picker(prefix: str, members: list[dict[str, Any]] | None = None, def
     return choice
 
 
-def get_availability(room_id: str, dates: list[date]) -> list[dict[str, Any]]:
-    """Load every availability row for the room/date range.
-
-    Supabase's Data API returns at most 1,000 rows by default. A normal
-    14-day schedule already has 1,344 quarter-hour slots for one member, so
-    a single unpaginated select silently omits later rows. Use deterministic
-    ordering and inclusive range pagination to retrieve the complete result.
-    """
-    if not dates:
-        return []
-
-    start, end = dates[0].isoformat(), dates[-1].isoformat()
-    page_size = 500
+def _paged_availability_query(query, page_size: int = 500) -> list[dict[str, Any]]:
+    """Read every matching availability row, regardless of the API row cap."""
+    rows: list[dict[str, Any]] = []
     offset = 0
-    all_rows: list[dict[str, Any]] = []
-
     while True:
-        response = (
-            SUPABASE.table("availability")
-            .select("id,user_id,date,time,status")
-            .eq("room_id", room_id)
-            .gte("date", start)
-            .lte("date", end)
-            .order("date")
-            .order("time")
-            .order("user_id")
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
-        page = response.data or []
-        all_rows.extend(page)
-
+        page = query.range(offset, offset + page_size - 1).execute().data or []
+        rows.extend(page)
         if len(page) < page_size:
             break
-        offset += len(page)
+        offset += page_size
+    return rows
 
-    return all_rows
+
+def get_availability(room_id: str, dates: list[date]) -> list[dict[str, Any]]:
+    if not dates:
+        return []
+    start, end = dates[0].isoformat(), dates[-1].isoformat()
+    query = (
+        SUPABASE.table("availability")
+        .select("id,user_id,date,time,status")
+        .eq("room_id", room_id)
+        .gte("date", start)
+        .lte("date", end)
+        .order("date")
+        .order("time")
+        .order("user_id")
+    )
+    return _paged_availability_query(query)
+
+
+def get_user_availability(room_id: str, user_id: str, start: date, end: date) -> list[dict[str, Any]]:
+    """Get one member's complete schedule for an inclusive date interval."""
+    query = (
+        SUPABASE.table("availability")
+        .select("date,time,status")
+        .eq("room_id", room_id)
+        .eq("user_id", user_id)
+        .gte("date", start.isoformat())
+        .lte("date", end.isoformat())
+        .order("date")
+        .order("time")
+    )
+    return _paged_availability_query(query)
+
+
+def save_availability_rows_verified(
+    room_id: str, user_id: str, rows: list[dict[str, Any]], batch_size: int = 100
+) -> tuple[int, list[tuple[str, str]]]:
+    """Upsert in small batches, fall back per cell, then verify against the DB."""
+    unique: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (str(row["date"]), str(row["time"])[:5])
+        unique[key] = {
+            "room_id": room_id,
+            "user_id": user_id,
+            "date": key[0],
+            "time": key[1],
+            "status": row["status"],
+        }
+    if not unique:
+        return 0, []
+
+    row_items = list(unique.items())
+    for start_index in range(0, len(row_items), batch_size):
+        batch = [row for _, row in row_items[start_index:start_index + batch_size]]
+        try:
+            SUPABASE.table("availability").upsert(
+                batch, on_conflict="room_id,user_id,date,time"
+            ).execute()
+        except Exception:
+            # A failed bulk request should not silently drop the whole stroke.
+            # Retry each cell separately so one problematic request cannot hide
+            # which individual slots failed.
+            for row in batch:
+                try:
+                    SUPABASE.table("availability").upsert(
+                        row, on_conflict="room_id,user_id,date,time"
+                    ).execute()
+                except Exception:
+                    pass
+
+    first_date = date.fromisoformat(min(key[0] for key in unique))
+    last_date = date.fromisoformat(max(key[0] for key in unique))
+    stored_rows = get_user_availability(room_id, user_id, first_date, last_date)
+    stored = {(str(row["date"]), str(row["time"])[:5]): row["status"] for row in stored_rows}
+    missing = [key for key, row in unique.items() if stored.get(key) != row["status"]]
+
+    # Repair any slot that was not visible in the confirmation read, then read
+    # once more. A cell is not painted in the UI until this final read confirms it.
+    for key in missing:
+        try:
+            SUPABASE.table("availability").upsert(
+                unique[key], on_conflict="room_id,user_id,date,time"
+            ).execute()
+        except Exception:
+            pass
+    if missing:
+        stored_rows = get_user_availability(room_id, user_id, first_date, last_date)
+        stored = {(str(row["date"]), str(row["time"])[:5]): row["status"] for row in stored_rows}
+        missing = [key for key, row in unique.items() if stored.get(key) != row["status"]]
+    return len(unique) - len(missing), missing
+
+
+def delete_availability_slots_verified(
+    room_id: str, user_id: str, slots_by_date: dict[str, set[str]], batch_size: int = 40
+) -> list[tuple[str, str]]:
+    targets = {(d, t) for d, times in slots_by_date.items() for t in times}
+    for date_text, slots in slots_by_date.items():
+        ordered = sorted(slots)
+        for offset in range(0, len(ordered), batch_size):
+            chunk = ordered[offset:offset + batch_size]
+            try:
+                SUPABASE.table("availability").delete().eq(
+                    "room_id", room_id
+                ).eq("user_id", user_id).eq("date", date_text).in_("time", chunk).execute()
+            except Exception:
+                for slot in chunk:
+                    try:
+                        clear_slot(room_id, user_id, date.fromisoformat(date_text), time_to_minute(slot))
+                    except Exception:
+                        pass
+    if not targets:
+        return []
+    first_date = date.fromisoformat(min(d for d, _ in targets))
+    last_date = date.fromisoformat(max(d for d, _ in targets))
+    stored_rows = get_user_availability(room_id, user_id, first_date, last_date)
+    still_present = {
+        (str(row["date"]), str(row["time"])[:5]) for row in stored_rows
+    } & targets
+    for date_text, slot in still_present:
+        try:
+            clear_slot(room_id, user_id, date.fromisoformat(date_text), time_to_minute(slot))
+        except Exception:
+            pass
+    if still_present:
+        stored_rows = get_user_availability(room_id, user_id, first_date, last_date)
+        still_present = {
+            (str(row["date"]), str(row["time"])[:5]) for row in stored_rows
+        } & targets
+    return sorted(still_present)
 
 
 def upsert_slot(room_id: str, user_id: str, selected_date: date, minute: int, status: str) -> None:
@@ -431,7 +534,7 @@ def bulk_set(
     windows: list[dict[str, Any]],
     status: str,
     existing: set[tuple[str, str]],
-) -> None:
+) -> int:
     rows = []
     for selected_date in dates:
         for minute in minutes:
@@ -448,14 +551,13 @@ def bulk_set(
                 "time": slot,
                 "status": status,
             })
-    # Keep bulk application below the API's practical request-size limits.
-    # This can exceed 1,000 rows for a two-week schedule.
-    batch_size = 200
-    for start in range(0, len(rows), batch_size):
-        batch = rows[start:start + batch_size]
-        SUPABASE.table("availability").upsert(
-            batch, on_conflict="room_id,user_id,date,time"
-        ).execute()
+    if rows:
+        saved_count, missing = save_availability_rows_verified(room_id, user_id, rows)
+        if missing:
+            preview = ", ".join(f"{d} {t}" for d, t in missing[:8])
+            raise RuntimeError(f"일부 일정 {len(missing)}칸을 저장하지 못했습니다: {preview}")
+        return saved_count
+    return 0
 
 def create_room(room_name: str, display_name: str, password: str, start: date, end: date, windows: list[dict[str, Any]], session_name: str = "보컬") -> dict[str, Any]:
     code = make_room_code()
@@ -588,9 +690,8 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
         and result.get("event_id")
         and result.get("event_id") != st.session_state.get(event_state_key)
     ):
-        # A component event already caused this Streamlit run. Process all cells
-        # in batches instead of making one network request per cell or forcing
-        # an extra full-app rerun (both caused visible lag/flicker).
+        # A component event already caused this Streamlit run. Persist and
+        # read back every changed slot before rerunning the UI from DB state.
         cells = result.get("cells") or []
         status = result.get("status") or selected_status
         rows_to_upsert = []
@@ -623,31 +724,38 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
                     "status": status,
                 })
 
-        # Large drags can contain hundreds or thousands of cells. Send them
-        # in smaller requests so one oversized PostgREST payload cannot cause
-        # the whole stroke to fail. Upsert is idempotent, so a retry is safe.
-        batch_size = 200
-        for start in range(0, len(rows_to_upsert), batch_size):
-            batch = rows_to_upsert[start:start + batch_size]
-            SUPABASE.table("availability").upsert(
-                batch, on_conflict="room_id,user_id,date,time"
-            ).execute()
+        try:
+            saved_count = 0
+            if rows_to_upsert:
+                saved_count, missing = save_availability_rows_verified(
+                    room["id"], user_id, rows_to_upsert, batch_size=100
+                )
+                if missing:
+                    preview = ", ".join(f"{d} {t}" for d, t in missing[:8])
+                    raise RuntimeError(f"저장 확인에 실패한 칸 {len(missing)}개: {preview}")
 
-        # Deletes are also chunked to keep URL/filter sizes bounded.
-        for date_text, slots in clear_by_date.items():
-            sorted_slots = sorted(slots)
-            for start in range(0, len(sorted_slots), batch_size):
-                batch = sorted_slots[start:start + batch_size]
-                SUPABASE.table("availability").delete().eq(
-                    "room_id", room["id"]
-                ).eq("user_id", user_id).eq("date", date_text).in_(
-                    "time", batch
-                ).execute()
+            failed_deletes = delete_availability_slots_verified(
+                room["id"], user_id, clear_by_date, batch_size=40
+            )
+            if failed_deletes:
+                preview = ", ".join(f"{d} {t}" for d, t in failed_deletes[:8])
+                raise RuntimeError(f"삭제 확인에 실패한 칸 {len(failed_deletes)}개: {preview}")
 
-        # Mark this component event as handled only after every database
-        # request succeeds. If a request fails halfway through, the same
-        # event can be retried on the next Streamlit rerun.
-        st.session_state[event_state_key] = result["event_id"]
+            # Mark the event handled only after the database read-back confirms
+            # every requested change. Then rerun so the grid is rebuilt solely
+            # from committed server data (no optimistic pending paint remains).
+            st.session_state[event_state_key] = result["event_id"]
+            changed_count = len(rows_to_upsert) + sum(len(v) for v in clear_by_date.values())
+            if changed_count:
+                st.session_state[f"_schedule_saved_notice_{room['id']}"] = {
+                    "count": changed_count,
+                    "action": "delete" if status == CLEAR_STATUS else "save",
+                }
+                st.rerun()
+        except Exception as exc:
+            st.error(f"일정이 서버에 완전히 저장되지 않았어요. 화면에는 저장된 칸만 표시됩니다. ({exc})")
+            if st.button("저장 다시 시도", key=f"retry_schedule_save_{key}", type="primary"):
+                st.rerun()
 
 
 def _window_editor(prefix: str, room_start: date, room_end: date, windows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -777,34 +885,128 @@ def show_schedule_input(room, user_id, windows):
     st.subheader("내 일정 입력")
     dates = all_room_dates(room)
     minutes = visible_minutes(windows)
-    # The status picker lives inside the custom grid component so changing
-    # colors does not trigger a slow full Streamlit rerun.
     selected_status = st.session_state.get(f"paint_status_{room['id']}", STATUS_OPTIONS[0])
     rows = get_availability(room["id"], dates)
     statuses = {(str(r["date"]), str(r["time"])[:5]): r["status"] for r in rows if r["user_id"] == user_id}
 
-    with st.container(border=True):
+    notice_key = f"_schedule_saved_notice_{room['id']}"
+    saved_notice = st.session_state.pop(notice_key, None)
+    if isinstance(saved_notice, dict):
+        notice_count = int(saved_notice.get("count", 0))
+        if notice_count and saved_notice.get("action") == "delete":
+            st.success(f"{notice_count:,}칸의 일정이 서버에서 삭제되었어요.")
+        elif notice_count:
+            st.success(f"{notice_count:,}칸의 일정이 서버에 저장되었어요.")
+    elif saved_notice:
+        st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
+
+    bulk_col, clear_col = st.columns([3.2, 1.25], vertical_alignment="bottom")
+    with bulk_col:
         st.markdown("**미선택 시간 일괄 설정**")
         b1, b2 = st.columns(2)
+        mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
         if b1.button("합주 완전 가능", use_container_width=True, key=f"bulk_yes_{room['id']}"):
-            mine={(str(r['date']),str(r['time'])[:5]) for r in rows if r['user_id']==user_id}
-            bulk_set(room['id'],user_id,dates,minutes,windows,STATUS_OPTIONS[0],mine); st.rerun()
+            try:
+                written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
+                st.session_state[notice_key] = written
+                st.rerun()
+            except Exception as exc:
+                st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
         if b2.button("합주 완전 불가", use_container_width=True, key=f"bulk_no_{room['id']}"):
-            mine={(str(r['date']),str(r['time'])[:5]) for r in rows if r['user_id']==user_id}
-            bulk_set(room['id'],user_id,dates,minutes,windows,STATUS_OPTIONS[3],mine); st.rerun()
+            try:
+                written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
+                st.session_state[notice_key] = written
+                st.rerun()
+            except Exception as exc:
+                st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+    with clear_col:
+        st.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
+        if st.button("내 일정 전체 지우기", use_container_width=True, key=f"bulk_clear_{room['id']}"):
+            try:
+                SUPABASE.table('availability').delete().eq('room_id', room['id']).eq('user_id', user_id).execute()
+                remaining = get_user_availability(room['id'], user_id, dates[0], dates[-1]) if dates else []
+                if remaining:
+                    raise RuntimeError(f"아직 {len(remaining)}칸이 남아 있습니다.")
+                reset_token_key = f"schedule_reset_{room['id']}"
+                st.session_state[reset_token_key] = st.session_state.get(reset_token_key, 0) + 1
+                st.session_state[notice_key] = 0
+                st.rerun()
+            except Exception as exc:
+                st.error(f"일정을 전체 삭제하지 못했습니다: {exc}")
 
     reset_token_key = f"schedule_reset_{room['id']}"
     if reset_token_key not in st.session_state:
         st.session_state[reset_token_key] = 0
-    with st.container(border=True):
-        if st.button("내 일정 전체 지우기", use_container_width=True, key=f"bulk_clear_{room['id']}"):
-            SUPABASE.table('availability').delete().eq('room_id',room['id']).eq('user_id',user_id).execute()
-            # Tell the iframe to discard optimistic cells from the last stroke.
-            st.session_state[reset_token_key] += 1
-            st.rerun()
+    render_schedule_component(room, user_id, dates, minutes, windows, statuses, selected_status,
+                              editable=True, key=f"editable_{room['id']}",
+                              reset_token=st.session_state[reset_token_key])
+    if st.button("이 일정 복사하기", key=f"copy_schedule_open_{room['id']}", type="secondary"):
+        show_copy_schedule_dialog(room, user_id)
 
-    render_schedule_component(room,user_id,dates,minutes,windows,statuses,selected_status,editable=True,key=f"editable_{room['id']}",reset_token=st.session_state[reset_token_key])
 
+@st.dialog("이 일정 복사하기")
+def show_copy_schedule_dialog(source_room: dict[str, Any], user_id: str) -> None:
+    rooms = [room for room in db_rooms_for_user(user_id) if str(room["id"]) != str(source_room["id"])]
+    if not rooms:
+        st.info("일정을 복사할 다른 합주 방이 없습니다. 다른 방에 먼저 참여해 주세요.")
+        return
+
+    source_dates = all_room_dates(source_room)
+    source_date_set = {d.isoformat() for d in source_dates}
+    st.caption("두 방의 날짜가 겹치는 날만 복사합니다. 같은 날짜와 시간대의 일정만 옮기며, 대상 방에 이미 입력된 값은 원본 일정으로 덮어씁니다. 원본에서 미입력인 칸은 대상 방에서 지우지 않습니다.")
+    room_ids = [str(room["id"]) for room in rooms]
+    room_map = {str(room["id"]): room for room in rooms}
+    target_id = st.selectbox(
+        "복사할 합주 방", room_ids,
+        format_func=lambda rid: f"{room_map[rid]['room_name']} · {room_map[rid]['start_date']}~{room_map[rid]['end_date']}",
+        key=f"copy_target_room_{source_room['id']}"
+    )
+    target_room = room_map[target_id]
+    target_dates = all_room_dates(target_room)
+    overlap = sorted(source_date_set & {d.isoformat() for d in target_dates})
+    if not overlap:
+        st.warning("두 합주 방의 일정 기간이 겹치지 않아 복사할 수 없습니다.")
+        return
+
+    st.write(f"**복사 범위:** {overlap[0]} ~ {overlap[-1]} ({len(overlap)}일)")
+    source_rows = get_user_availability(
+        str(source_room["id"]), user_id,
+        date.fromisoformat(overlap[0]), date.fromisoformat(overlap[-1])
+    )
+    source_map = {(str(row["date"]), str(row["time"])[:5]): row["status"] for row in source_rows
+                  if str(row["date"]) in set(overlap) and row.get("status") in STATUS_OPTIONS}
+    source_windows = get_windows(source_room)
+    target_windows = get_windows(target_room)
+    to_copy = []
+    skipped_source_blocked = 0
+    skipped_target_blocked = 0
+    for (date_text, time_text), status in source_map.items():
+        selected_date = date.fromisoformat(date_text)
+        if is_unavailable(time_text, source_windows, selected_date):
+            skipped_source_blocked += 1
+            continue
+        if is_unavailable(time_text, target_windows, selected_date):
+            skipped_target_blocked += 1
+            continue
+        to_copy.append({"date": date_text, "time": time_text, "status": status})
+
+    st.write(f"복사할 입력: **{len(to_copy):,}칸**")
+    if skipped_source_blocked:
+        st.caption(f"원본 방에서 합주 제외된 {skipped_source_blocked:,}칸은 복사하지 않습니다.")
+    if skipped_target_blocked:
+        st.caption(f"대상 방의 합주 제외 시간대와 겹치는 {skipped_target_blocked:,}칸은 건너뜁니다.")
+    if st.button("겹치는 날짜의 일정 복사", type="primary", use_container_width=True,
+                 disabled=not to_copy, key=f"copy_schedule_submit_{source_room['id']}"):
+        try:
+            saved_count, missing = save_availability_rows_verified(str(target_room["id"]), user_id, to_copy)
+            if missing:
+                preview = ", ".join(f"{d} {t}" for d, t in missing[:8])
+                st.error(f"일부 일정 {len(missing)}칸을 복사하지 못했습니다: {preview}")
+            else:
+                st.session_state[f"_schedule_saved_notice_{target_room['id']}"] = saved_count
+                st.success(f"{saved_count:,}칸을 '{target_room['room_name']}' 방에 복사했어요.")
+        except Exception as exc:
+            st.error(f"일정을 복사하지 못했습니다: {exc}")
 
 def _hex_rgb(value: str) -> tuple[int, int, int]:
     value = value.lstrip("#")
@@ -1007,16 +1209,31 @@ def show_my_rooms(user_id: str):
     if not rooms:
         st.info("아직 참여한 합주 방이 없습니다. 방을 만들거나 초대 코드로 참여해 주세요.")
         return None
-    labels = {
-        r["id"]: f"{r['room_name']} · 코드 {r['room_code']} · 내 역할 {r['my_membership'].get('role', 'member')}"
-        for r in rooms
-    }
-    ids = [r["id"] for r in rooms]
-    current = st.session_state.get("active_room_id")
-    default = ids.index(current) if current in ids else 0
-    selected = st.selectbox("내 합주 방", ids, index=default, format_func=lambda rid: labels[rid], key="room_selector")
-    st.session_state["active_room_id"] = selected
-    return next(r for r in rooms if r["id"] == selected)
+
+    st.markdown("#### 내 합주 방")
+    ids = [str(r["id"]) for r in rooms]
+    current = str(st.session_state.get("active_room_id") or "")
+    if current not in ids:
+        current = ids[0]
+        st.session_state["active_room_id"] = current
+
+    for room in rooms:
+        room_id = str(room["id"])
+        is_selected = room_id == current
+        is_host = str(room.get("host_id")) == str(user_id)
+        subline = f"방 번호 {room['room_code']}" + (" · 방장" if is_host else "")
+        with st.container(border=True):
+            card_text, action = st.columns([6, 1.1], vertical_alignment="center")
+            card_text.markdown(f"### {room['room_name']}")
+            card_text.caption(subline)
+            if is_selected:
+                action.button("선택됨", type="primary", disabled=True,
+                              use_container_width=True, key=f"room_selected_{room_id}")
+            elif action.button("열기", type="secondary", use_container_width=True,
+                               key=f"room_open_{room_id}"):
+                st.session_state["active_room_id"] = room_id
+                st.rerun()
+    return next(r for r in rooms if str(r["id"]) == current)
 
 
 @st.dialog("이 방에 참여한 멤버")
@@ -1130,6 +1347,21 @@ def main():
       display: none !important;
       visibility: hidden !important;
     }
+    /* Blue is the app-wide interaction/accent color (availability colors stay semantic). */
+    :root { --primary-color: #2563EB !important; --color-primary: #2563EB !important; }
+    button[kind="primary"], [data-testid="stBaseButton-primary"] {
+      background: #2563EB !important; border-color: #2563EB !important; color: #fff !important;
+    }
+    button[kind="primary"]:hover, [data-testid="stBaseButton-primary"]:hover {
+      background: #1D4ED8 !important; border-color: #1D4ED8 !important;
+    }
+    [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
+      background: #2563EB !important; border-color: #2563EB !important; color: #fff !important;
+    }
+    [data-testid="stCheckbox"] input:checked + div,
+    [data-testid="stRadio"] input:checked + div { border-color: #2563EB !important; }
+    [data-baseweb="select"]:focus-within, [data-baseweb="input"]:focus-within,
+    [data-baseweb="textarea"]:focus-within { border-color: #2563EB !important; }
     /* Navigation should look like three connected tabs, not radio controls. */
     div[data-testid="stSegmentedControl"] { width: 100%; margin-bottom: 1rem; }
     div[data-testid="stSegmentedControl"] > div { width: 100%; }
