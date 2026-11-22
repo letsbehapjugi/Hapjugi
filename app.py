@@ -1270,7 +1270,10 @@ def show_my_rooms(user_id: str):
     # horizontal alignment can be controlled together.
     with st.container(key="room-selector-layout", gap="small"):
         title_col, toggle_col = st.columns([8, 1], vertical_alignment="center")
-        title_col.markdown("#### 내 합주실")
+        title_col.markdown(
+            '<div class="room-selector-heading">내 합주실</div>',
+            unsafe_allow_html=True,
+        )
         if toggle_col.button(
             "접기" if expanded else "펼치기",
             use_container_width=False,
@@ -1325,13 +1328,13 @@ def show_my_rooms(user_id: str):
                         </div>''',
                         unsafe_allow_html=True,
                     )
-                    # Keep the button as the card's last direct child. CSS
-                    # anchors this child to the lower-right corner of the card.
+                    # The widget key gives CSS a stable hook to anchor the button
+                    # to the card's lower-right corner without relying on DOM order.
                     if st.button(
                         "선택됨" if is_selected else "이동",
                         type="primary" if is_selected else "secondary",
                         disabled=is_selected,
-                        use_container_width=False,
+                        use_container_width=True,
                         key=f"room_open_{room_id}",
                     ):
                         st.session_state["active_room_id"] = room_id
@@ -1795,28 +1798,35 @@ def main():
       display:flex !important; justify-content:stretch !important; width:100% !important;
     }
 
-    /* Main content: reduce the top dead space and keep side margins balanced. */
+    /* Main content spacing: the title sits near the page top, with a deliberate gap before cards. */
     section.main > div.block-container,
     [data-testid="stMainBlockContainer"] {
-      padding-top:1.35rem !important;
-      padding-left:clamp(1rem, 2vw, 1.75rem) !important;
-      padding-right:clamp(1rem, 2vw, 1.75rem) !important;
+      padding-top:1rem !important;
+      padding-left:clamp(1rem, 2vw, 1.5rem) !important;
+      padding-right:clamp(1rem, 2vw, 1.5rem) !important;
     }
 
-    /* Room selector heading and card row use one consistent left/right inset. */
     div.st-key-room-selector-layout {
       width:100% !important;
       max-width:100% !important;
-      margin-top:-.55rem !important;
+      margin:0 !important;
+      padding:0 !important;
     }
     div.st-key-room-selector-layout > [data-testid="stVerticalBlock"],
     div.st-key-room-selector-layout [data-testid="stVerticalBlock"] {
-      gap:.2rem !important;
+      gap:.7rem !important;
     }
-    div.st-key-room-selector-layout [data-testid="stMarkdownContainer"] h4 {
+    .room-selector-heading {
+      display:flex !important;
+      align-items:center !important;
+      min-height:32px !important;
       margin:0 !important;
       padding:0 !important;
-      line-height:1.15 !important;
+      color:var(--hap-heading) !important;
+      font-size:1.35rem !important;
+      font-weight:800 !important;
+      line-height:1.25 !important;
+      letter-spacing:-.04em !important;
     }
     div.st-key-room-selector-layout [data-testid="stHorizontalBlock"]:first-child {
       padding:0 4px !important;
@@ -1839,14 +1849,18 @@ def main():
       border-radius:999px !important;
     }
 
-    /* The carousel is the ONLY horizontally scrollable element in this area. */
-    div.st-key-room-carousel,
-    div.st-key-room-carousel-expanded {
+    /* Only the room list scrolls horizontally; each card has no scrollable area. */
+    div.st-key-room-carousel {
       width:100% !important;
       max-width:100% !important;
-      margin-top:-.9rem !important;
-      overflow:visible !important;
+      margin:0 !important;
+      padding:0 4px 14px !important;
       box-sizing:border-box !important;
+      overflow-x:auto !important;
+      overflow-y:hidden !important;
+      scrollbar-width:thin !important;
+      overscroll-behavior-x:contain !important;
+      touch-action:pan-x pan-y !important;
     }
     div.st-key-room-carousel[data-testid="stHorizontalBlock"],
     div.st-key-room-carousel > [data-testid="stHorizontalBlock"] {
@@ -1854,18 +1868,21 @@ def main():
       flex-direction:row !important;
       flex-wrap:nowrap !important;
       align-items:stretch !important;
-      justify-content:safe center !important;
+      justify-content:flex-start !important;
       gap:16px !important;
+      width:max-content !important;
+      min-width:100% !important;
+      max-width:none !important;
+      overflow:visible !important;
+      box-sizing:border-box !important;
+    }
+    div.st-key-room-carousel-expanded {
       width:100% !important;
       max-width:100% !important;
-      overflow-x:auto !important;
-      overflow-y:hidden !important;
-      padding:4px 4px 14px !important;
+      margin:0 !important;
+      padding:0 4px 12px !important;
       box-sizing:border-box !important;
-      scroll-snap-type:x mandatory !important;
-      scrollbar-width:thin !important;
-      overscroll-behavior-x:contain !important;
-      touch-action:pan-x pan-y !important;
+      overflow:visible !important;
     }
     div.st-key-room-carousel-expanded[data-testid="stHorizontalBlock"],
     div.st-key-room-carousel-expanded > [data-testid="stHorizontalBlock"] {
@@ -1873,18 +1890,18 @@ def main():
       flex-direction:row !important;
       flex-wrap:wrap !important;
       align-items:stretch !important;
-      justify-content:center !important;
+      justify-content:flex-start !important;
       gap:16px !important;
       width:100% !important;
       max-width:100% !important;
       overflow:visible !important;
-      padding:4px 4px 12px !important;
       box-sizing:border-box !important;
     }
 
-    /* Card dimensions are CSS dimensions, not Streamlit fixed-height containers.
-       Removing st.container(height=...) prevents an inner scrollbar per card. */
+    /* Card dimensions are fixed here, not by a height-limited Streamlit container. */
     div[class*="st-key-room-card-"] {
+      position:relative !important;
+      display:block !important;
       flex:0 0 362px !important;
       width:362px !important;
       min-width:362px !important;
@@ -1896,15 +1913,17 @@ def main():
       box-sizing:border-box !important;
       scroll-snap-align:start !important;
     }
-    div[class*="st-key-room-card-"] > [data-testid="stVerticalBlockBorderWrapper"],
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] {
-      display:flex !important;
+    div[class*="st-key-room-card-"] > [data-testid="stVerticalBlockBorderWrapper"] {
+      position:relative !important;
+      display:block !important;
       width:100% !important;
       min-width:100% !important;
       max-width:100% !important;
       height:100% !important;
       min-height:100% !important;
       max-height:100% !important;
+      margin:0 !important;
+      padding:0 !important;
       box-sizing:border-box !important;
       overflow:hidden !important;
       border-radius:18px !important;
@@ -1913,63 +1932,57 @@ def main():
       box-shadow:var(--hap-shadow-raised) !important;
       transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
     }
-    div[class*="st-key-room-card-selected-"] [data-testid="stVerticalBlockBorderWrapper"] {
+    div[class*="st-key-room-card-selected-"] > [data-testid="stVerticalBlockBorderWrapper"] {
       border:1.5px solid color-mix(in srgb, #2563EB 58%, var(--hap-border)) !important;
       background:linear-gradient(145deg, color-mix(in srgb, #2563EB 7%, var(--hap-surface)), var(--hap-surface)) !important;
       box-shadow:0 8px 22px color-mix(in srgb, #2563EB 14%, transparent), var(--hap-shadow-raised) !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
-      display:flex !important;
-      flex-direction:column !important;
-      align-items:stretch !important;
-      justify-content:space-between !important;
-      gap:8px !important;
+    div[class*="st-key-room-card-"] > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
+      position:relative !important;
+      display:block !important;
       width:100% !important;
+      min-width:0 !important;
       height:100% !important;
       min-height:0 !important;
+      max-height:100% !important;
+      margin:0 !important;
+      padding:0 !important;
       box-sizing:border-box !important;
-      padding:22px 24px 16px !important;
       overflow:hidden !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:first-child {
-      flex:1 1 auto !important;
-      width:100% !important;
+
+    /* Content occupies only the upper portion; it cannot push or overlap the button. */
+    div[class*="st-key-room-card-"] [data-testid="stElementContainer"]:has(.room-card-content) {
+      position:absolute !important;
+      top:24px !important;
+      left:24px !important;
+      right:24px !important;
+      width:auto !important;
+      max-width:none !important;
+      height:auto !important;
       min-height:0 !important;
-      display:flex !important;
-      align-items:center !important;
+      max-height:calc(100% - 82px) !important;
       margin:0 !important;
-    }
-    /* Button is a direct final child, pinned consistently to the lower-right. */
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child {
-      flex:0 0 38px !important;
-      align-self:flex-end !important;
-      width:92px !important;
-      min-width:92px !important;
-      max-width:92px !important;
-      margin:0 !important;
-    }
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child [data-testid="stButton"] {
-      display:flex !important;
-      justify-content:flex-end !important;
-      width:92px !important;
-      min-width:92px !important;
-      max-width:92px !important;
-      margin:0 !important;
+      padding:0 !important;
+      overflow:hidden !important;
+      box-sizing:border-box !important;
     }
     div[class*="st-key-room-card-"] .room-card-content {
       display:flex !important;
-      flex:1 1 auto !important;
       flex-direction:column !important;
       align-items:flex-start !important;
-      justify-content:center !important;
+      justify-content:flex-start !important;
       gap:18px !important;
       width:100% !important;
-      height:100% !important;
+      height:auto !important;
       min-height:0 !important;
+      margin:0 !important;
+      padding:0 !important;
       box-sizing:border-box !important;
     }
     div[class*="st-key-room-card-"] .room-card-name {
       width:100%;
+      margin:0 !important;
       color:var(--hap-text);
       font-size:1.34rem;
       line-height:1.3;
@@ -1988,6 +2001,7 @@ def main():
       gap:17px;
       min-height:22px;
       width:100%;
+      margin:0 !important;
     }
     div[class*="st-key-room-card-"] .room-card-meta-item {
       display:inline-flex;
@@ -2017,18 +2031,44 @@ def main():
       font-weight:800;
       white-space:nowrap;
     }
-    div[class*="st-key-room-card-"] [data-testid="stBaseButton-secondary"],
-    div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
+
+    /* Target the keyed button widget itself; never depend on Streamlit child order. */
+    div[class*="st-key-room_open_"] {
+      position:absolute !important;
+      right:24px !important;
+      bottom:20px !important;
       width:92px !important;
       min-width:92px !important;
       max-width:92px !important;
+      height:38px !important;
+      min-height:38px !important;
+      margin:0 !important;
+      padding:0 !important;
+      overflow:visible !important;
+      box-sizing:border-box !important;
+      z-index:2 !important;
+    }
+    div[class*="st-key-room_open_"] [data-testid="stButton"] {
+      display:flex !important;
+      width:100% !important;
+      height:100% !important;
+      margin:0 !important;
+      padding:0 !important;
+    }
+    div[class*="st-key-room_open_"] [data-testid="stBaseButton-secondary"],
+    div[class*="st-key-room_open_"] [data-testid="stBaseButton-primary"] {
+      display:flex !important;
+      width:100% !important;
+      min-width:0 !important;
+      max-width:100% !important;
       min-height:38px !important;
       height:38px !important;
-      padding:.4rem .8rem !important;
       margin:0 !important;
+      padding:.4rem .8rem !important;
       border-radius:11px !important;
       font-size:.84rem !important;
       font-weight:750 !important;
+      box-sizing:border-box !important;
     }
     div[class*="st-key-room-card-selected-"] [data-testid="stBaseButton-primary"]:disabled {
       opacity:1 !important;
@@ -2039,7 +2079,7 @@ def main():
       box-shadow:var(--hap-shadow-inset) !important;
     }
 
-    /* Expanded cards retain the same alignment at their smaller dimensions. */
+    /* Expanded layout uses smaller cards but the same top-content/bottom-action structure. */
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
       flex:0 0 320px !important;
       width:320px !important;
@@ -2049,21 +2089,26 @@ def main():
       min-height:198px !important;
       max-height:198px !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
-      padding:15px 17px 12px !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stElementContainer"]:has(.room-card-content) {
+      top:18px !important;
+      left:17px !important;
+      right:17px !important;
+      max-height:calc(100% - 70px) !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child {
-      flex-basis:36px !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room_open_"] {
+      right:17px !important;
+      bottom:14px !important;
       width:88px !important;
       min-width:88px !important;
       max-width:88px !important;
+      height:36px !important;
+      min-height:36px !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child [data-testid="stButton"],
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-secondary"],
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
-      width:88px !important;
-      min-width:88px !important;
-      max-width:88px !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room_open_"] [data-testid="stBaseButton-secondary"],
+    div.st-key-room-carousel-expanded div[class*="st-key-room_open_"] [data-testid="stBaseButton-primary"] {
+      width:100% !important;
+      min-width:0 !important;
+      max-width:100% !important;
       min-height:36px !important;
       height:36px !important;
     }
@@ -2090,32 +2135,38 @@ def main():
     }
 
     @media (max-width:680px) {
-      div.st-key-room-carousel[data-testid="stHorizontalBlock"],
-      div.st-key-room-carousel > [data-testid="stHorizontalBlock"] {
-        justify-content:flex-start !important;
+      section.main > div.block-container,
+      [data-testid="stMainBlockContainer"] {
+        padding-top:.85rem !important;
+        padding-left:1rem !important;
+        padding-right:1rem !important;
       }
       div.st-key-room-carousel div[class*="st-key-room-card-"] {
         flex-basis:min(362px, 86vw) !important;
         width:min(362px, 86vw) !important;
         min-width:min(362px, 86vw) !important;
         max-width:min(362px, 86vw) !important;
-        height:auto !important;
-        aspect-ratio:362 / 224 !important;
-        min-height:0 !important;
-        max-height:none !important;
+        height:224px !important;
+        min-height:224px !important;
+        max-height:224px !important;
       }
       div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
         flex-basis:min(320px, 88vw) !important;
         width:min(320px, 88vw) !important;
-        min-width:0 !important;
-        max-width:100% !important;
-        height:auto !important;
-        aspect-ratio:320 / 198 !important;
-        min-height:0 !important;
-        max-height:none !important;
+        min-width:min(320px, 88vw) !important;
+        max-width:min(320px, 88vw) !important;
+        height:198px !important;
+        min-height:198px !important;
+        max-height:198px !important;
       }
-      div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
-        padding:16px !important;
+      div[class*="st-key-room-card-"] [data-testid="stElementContainer"]:has(.room-card-content) {
+        top:18px !important;
+        left:16px !important;
+        right:16px !important;
+      }
+      div[class*="st-key-room_open_"] {
+        right:16px !important;
+        bottom:14px !important;
       }
     }
     </style>""", unsafe_allow_html=True)
