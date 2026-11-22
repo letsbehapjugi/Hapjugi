@@ -810,75 +810,98 @@ def _normalize_window_editor(prefix: str, count: int) -> None:
 
 
 def show_room_creation(user_id: str):
-    st.subheader("새 합주 방 만들기")
-    if "create_window_count" not in st.session_state:
-        st.session_state["create_window_count"] = 0
-    room_name = st.text_input("방 이름", placeholder="예: 경희대학교 한국어학과 밴드 동아리 ‘가락’ 합주", key="create_room_name")
-    host_name = st.text_input("내 이름", value=current_user_name(), key="create_host_name")
-    host_session = session_picker("create_host", [], "보컬")
-    password = st.text_input("방 비밀번호 (선택)", type="password", help="비워 두면 비밀번호 없이 방 코드만으로 참여할 수 있습니다.", key="create_password")
-    c1,c2=st.columns(2)
-    start=c1.date_input("합주 시작일", date.today(), key="create_start")
-    end=c2.date_input("합주 종료일", date.today()+timedelta(days=13), key="create_end")
-    if end < start:
-        st.error("종료일은 시작일보다 빠를 수 없습니다.")
-        return
-    _normalize_window_editor("create", st.session_state.get("create_window_count",0))
-    windows=_window_editor("create", start, end, [])
-    if st.button("방 만들기", type="primary", use_container_width=True, key="create_room_submit"):
-        room_name,host_name=room_name.strip(),host_name.strip()
-        if not room_name or not host_name:
-            st.error("방 이름과 내 이름을 입력해 주세요."); return
-        if not host_session:
-            st.error("세션을 선택하거나 새 세션 이름을 입력해 주세요."); return
-        valid=[]
-        for w in windows:
-            if not w: continue
-            if w["start"]==w["end"]: st.error("합주 제외 시간대의 시작과 종료를 다르게 설정해 주세요."); return
-            if w["scope"]=="dates" and not w["dates"]: st.error("날짜 선택을 사용한 시간대에는 최소 한 날짜를 골라 주세요."); return
-            valid.append(w)
-        try:
-            created=create_room(room_name,host_name,password.strip(),start,end,valid,host_session)
-            st.session_state["active_room_id"]=created["id"]
-            st.session_state["pending_main_section"]="내 합주실"
-            st.success(f"방을 만들었습니다. 방 코드: **{created['room_code']}**")
-            st.rerun()
-        except Exception as exc:
-            st.error(f"방을 만들지 못했습니다: {exc}")
+    with st.container(key="room-create-form"):
+        st.subheader("새 합주 방 만들기")
+        if "create_window_count" not in st.session_state:
+            st.session_state["create_window_count"] = 0
+        room_name = st.text_input("방 이름", placeholder="예: 경희대학교 한국어학과 밴드 동아리 ‘가락’ 합주", key="create_room_name")
+        host_name = st.text_input("내 이름", value=current_user_name(), key="create_host_name")
+        host_session = session_picker("create_host", [], "보컬")
+        password = st.text_input("방 비밀번호 (선택)", type="password", help="비워 두면 비밀번호 없이 방 코드만으로 참여할 수 있습니다.", key="create_password")
+        c1,c2=st.columns(2)
+        start=c1.date_input("합주 시작일", date.today(), key="create_start")
+        end=c2.date_input("합주 종료일", date.today()+timedelta(days=13), key="create_end")
+        if end < start:
+            st.error("종료일은 시작일보다 빠를 수 없습니다.")
+            return
+        _normalize_window_editor("create", st.session_state.get("create_window_count",0))
+        windows=_window_editor("create", start, end, [])
+        if st.button("방 만들기", type="primary", use_container_width=True, key="create_room_submit"):
+            room_name,host_name=room_name.strip(),host_name.strip()
+            if not room_name or not host_name:
+                st.error("방 이름과 내 이름을 입력해 주세요."); return
+            if not host_session:
+                st.error("세션을 선택하거나 새 세션 이름을 입력해 주세요."); return
+            valid=[]
+            for w in windows:
+                if not w: continue
+                if w["start"]==w["end"]: st.error("합주 제외 시간대의 시작과 종료를 다르게 설정해 주세요."); return
+                if w["scope"]=="dates" and not w["dates"]: st.error("날짜 선택을 사용한 시간대에는 최소 한 날짜를 골라 주세요."); return
+                valid.append(w)
+            try:
+                created=create_room(room_name,host_name,password.strip(),start,end,valid,host_session)
+                st.session_state["active_room_id"]=created["id"]
+                st.session_state["pending_main_section"]="내 합주실"
+                st.success(f"방을 만들었습니다. 방 코드: **{created['room_code']}**")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"방을 만들지 못했습니다: {exc}")
+
 
 def show_join_room():
-    st.subheader("초대 코드로 방 참여하기")
-    code = st.text_input("6자리 방 코드", max_chars=6, placeholder="예: 123456", key="join_room_code")
-    password = st.text_input("방 비밀번호", type="password", help="방장이 비밀번호를 설정하지 않았다면 비워 두세요.", key="join_room_password")
-    name = st.text_input("내 이름", value=current_user_name(), key="join_room_name")
-    found_room = lookup_room_by_code(code.strip()) if len(code.strip()) == 6 and code.strip().isdigit() else None
-    existing_members = get_members(str(found_room["id"])) if found_room else []
-    session_name = session_picker(f"join_{found_room['id']}" if found_room else "join", existing_members, "보컬")
-    if found_room:
-        st.caption(f"참여할 방: **{found_room['room_name']}**")
-    if st.button("방 참여", type="primary", use_container_width=True, key="join_room_submit"):
-        code, name = code.strip(), name.strip()
-        if len(code) != 6 or not code.isdigit():
-            st.error("방 코드는 숫자 6자리로 입력해 주세요.")
-            return
-        if not name:
-            st.error("내 이름을 입력해 주세요.")
-            return
-        if not session_name:
-            st.error("세션을 선택하거나 새 세션 이름을 입력해 주세요.")
-            return
-        try:
-            room = lookup_room_by_code(code)
-            if not room:
-                st.error("해당 코드의 방을 찾을 수 없습니다.")
+    with st.container(key="room-join-form"):
+        st.subheader("초대 코드로 방 참여하기")
+        code = st.text_input("6자리 방 코드", max_chars=6, placeholder="예: 123456", key="join_room_code")
+        password = st.text_input("방 비밀번호", type="password", help="방장이 비밀번호를 설정하지 않았다면 비워 두세요.", key="join_room_password")
+        name = st.text_input("내 이름", value=current_user_name(), key="join_room_name")
+        found_room = lookup_room_by_code(code.strip()) if len(code.strip()) == 6 and code.strip().isdigit() else None
+        existing_members = get_members(str(found_room["id"])) if found_room else []
+        session_name = session_picker(f"join_{found_room['id']}" if found_room else "join", existing_members, "보컬")
+        if found_room:
+            st.caption(f"참여할 방: **{found_room['room_name']}**")
+        if st.button("방 참여", type="primary", use_container_width=True, key="join_room_submit"):
+            code, name = code.strip(), name.strip()
+            if len(code) != 6 or not code.isdigit():
+                st.error("방 코드는 숫자 6자리로 입력해 주세요.")
                 return
-            joined = join_room(code, password.strip(), name, session_name)
-            st.session_state["active_room_id"] = joined["id"]
-            st.session_state["pending_main_section"] = "내 합주실"
-            st.success(f"'{room['room_name']}' 방에 참여했습니다.")
+            if not name:
+                st.error("내 이름을 입력해 주세요.")
+                return
+            if not session_name:
+                st.error("세션을 선택하거나 새 세션 이름을 입력해 주세요.")
+                return
+            try:
+                room = lookup_room_by_code(code)
+                if not room:
+                    st.error("해당 코드의 방을 찾을 수 없습니다.")
+                    return
+                joined = join_room(code, password.strip(), name, session_name)
+                st.session_state["active_room_id"] = joined["id"]
+                st.session_state["pending_main_section"] = "내 합주실"
+                st.success(f"'{room['room_name']}' 방에 참여했습니다.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"방 코드 또는 비밀번호가 맞지 않거나 세션 정보를 저장하지 못했습니다: {exc}")
+
+
+@st.dialog("내 일정 전체 지우기", width="small")
+def confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key):
+    st.write("정말 지우시겠어요?")
+    cancel_col, confirm_col = st.columns(2)
+    if cancel_col.button("취소", use_container_width=True, key=f"cancel_schedule_clear_{room['id']}"):
+        st.rerun()
+    if confirm_col.button("지우기", type="primary", use_container_width=True,
+                          key=f"confirm_schedule_clear_{room['id']}"):
+        try:
+            SUPABASE.table("availability").delete().eq("room_id", room["id"]).eq("user_id", user_id).execute()
+            remaining = get_user_availability(room["id"], user_id, dates[0], dates[-1]) if dates else []
+            if remaining:
+                raise RuntimeError(f"아직 {len(remaining)}칸이 남아 있습니다.")
+            st.session_state[reset_token_key] = st.session_state.get(reset_token_key, 0) + 1
+            st.session_state[notice_key] = 0
             st.rerun()
         except Exception as exc:
-            st.error(f"방 코드 또는 비밀번호가 맞지 않거나 세션 정보를 저장하지 못했습니다: {exc}")
+            st.error(f"일정을 전체 삭제하지 못했습니다: {exc}")
 
 
 def show_schedule_input(room, user_id, windows):
@@ -900,48 +923,34 @@ def show_schedule_input(room, user_id, windows):
     elif saved_notice:
         st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
 
-    # Bulk fill and destructive reset are deliberately separated into
-    # independent sections so the reset action is not perceived as a third
-    # bulk-fill option.
-    st.subheader("미선택 시간 일괄 설정")
-    st.caption("아직 상태를 입력하지 않은 시간에만 적용됩니다. 이미 입력한 일정은 유지됩니다.")
-    b1, b2 = st.columns(2)
-    mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
-    if b1.button("합주 완전 가능", use_container_width=True, key=f"bulk_yes_{room['id']}"):
-        try:
-            written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
-            st.session_state[notice_key] = written
-            st.rerun()
-        except Exception as exc:
-            st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
-    if b2.button("합주 완전 불가", use_container_width=True, key=f"bulk_no_{room['id']}"):
-        try:
-            written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
-            st.session_state[notice_key] = written
-            st.rerun()
-        except Exception as exc:
-            st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+    # 상위 기능은 좌우 1:1, 일괄 설정의 두 선택지만 왼쪽 영역 안에 둔다.
+    bulk_heading_col, clear_action_col = st.columns(2, gap="large")
+    with bulk_heading_col:
+        st.markdown('<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>', unsafe_allow_html=True)
+    reset_token_key = f"schedule_reset_{room['id']}"
+    with clear_action_col:
+        if st.button("내 일정 전체 지우기", use_container_width=True,
+                      key=f"bulk_clear_{room['id']}", type="secondary"):
+            confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
 
-    # 삭제는 일괄 입력과 별개의 '위험 작업' 영역으로 분리한다.
-    st.markdown(" ")
-    with st.container(border=True):
-        st.markdown("**일정 초기화**")
-        reset_info, reset_action = st.columns([4, 1.5], vertical_alignment="center")
-        with reset_info:
-            st.caption("현재 방에서 내가 입력한 일정을 모두 삭제합니다. 위의 빈 시간 일괄 설정과는 별개의 작업입니다.")
-        with reset_action:
-            if st.button("내 일정 전체 지우기", use_container_width=True, key=f"bulk_clear_{room['id']}"):
-                try:
-                    SUPABASE.table('availability').delete().eq('room_id', room['id']).eq('user_id', user_id).execute()
-                    remaining = get_user_availability(room['id'], user_id, dates[0], dates[-1]) if dates else []
-                    if remaining:
-                        raise RuntimeError(f"아직 {len(remaining)}칸이 남아 있습니다.")
-                    reset_token_key = f"schedule_reset_{room['id']}"
-                    st.session_state[reset_token_key] = st.session_state.get(reset_token_key, 0) + 1
-                    st.session_state[notice_key] = 0
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"일정을 전체 삭제하지 못했습니다: {exc}")
+    bulk_action_col, _empty_action_col = st.columns(2, gap="large")
+    with bulk_action_col:
+        b1, b2 = st.columns(2, gap="small")
+        mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
+        if b1.button("합주 완전 가능", use_container_width=True, key=f"bulk_yes_{room['id']}"):
+            try:
+                written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
+                st.session_state[notice_key] = written
+                st.rerun()
+            except Exception as exc:
+                st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+        if b2.button("합주 완전 불가", use_container_width=True, key=f"bulk_no_{room['id']}"):
+            try:
+                written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
+                st.session_state[notice_key] = written
+                st.rerun()
+            except Exception as exc:
+                st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
 
     reset_token_key = f"schedule_reset_{room['id']}"
     if reset_token_key not in st.session_state:
@@ -953,7 +962,7 @@ def show_schedule_input(room, user_id, windows):
         show_copy_schedule_dialog(room, user_id)
 
 
-@st.dialog("이 일정 복사하기")
+@st.dialog("이 일정 복사하기", width="small")
 def show_copy_schedule_dialog(source_room: dict[str, Any], user_id: str) -> None:
     rooms = [room for room in db_rooms_for_user(user_id) if str(room["id"]) != str(source_room["id"])]
     if not rooms:
@@ -1219,37 +1228,44 @@ def show_my_rooms(user_id: str):
         st.info("아직 참여한 합주 방이 없습니다. 방을 만들거나 초대 코드로 참여해 주세요.")
         return None
 
-    st.markdown("#### 내 합주 방")
+    expanded_key = "_hapjugi_rooms_expanded"
+    expanded = bool(st.session_state.get(expanded_key, False))
+    title_col, toggle_col = st.columns([5, 1], vertical_alignment="center")
+    title_col.markdown("#### 내 합주 방")
+    if toggle_col.button("접기" if expanded else "펼치기", use_container_width=True,
+                         key="toggle_room_list_layout"):
+        st.session_state[expanded_key] = not expanded
+        st.rerun()
+
     ids = [str(r["id"]) for r in rooms]
     current = str(st.session_state.get("active_room_id") or "")
     if current not in ids:
         current = ids[0]
         st.session_state["active_room_id"] = current
 
-    for room in rooms:
-        room_id = str(room["id"])
-        is_selected = room_id == current
-        is_host = str(room.get("host_id")) == str(user_id)
-        # 현재 선택된 방에는 상태 표시만 두고, 이동 버튼은 다른 방에만 둔다.
-        # 따라서 한 카드 안에 '선택됨'과 '이동'이 동시에 보이지 않는다.
-        with st.container(border=True):
-            card_text, action = st.columns([6, 1.25], vertical_alignment="center")
-            card_text.markdown(f"### {room['room_name']}")
-            if is_host:
-                card_text.caption("방장")
-            if is_selected:
-                action.markdown(
-                    '<div class="room-current-state">현재 선택</div>',
-                    unsafe_allow_html=True,
-                )
-            elif action.button("이동", type="secondary", use_container_width=True,
+    carousel_key = "room-carousel-expanded" if expanded else "room-carousel"
+    with st.container(key=carousel_key):
+        for idx, room in enumerate(rooms):
+            room_id = str(room["id"])
+            is_selected = room_id == current
+            is_host = str(room.get("host_id")) == str(user_id)
+            with st.container(key=f"room-card-{idx}", border=True):
+                st.markdown(f"### {room['room_name']}")
+                if is_host:
+                    st.caption("방장")
+                if is_selected:
+                    st.markdown(
+                        '<div class="room-current-state">선택됨</div>',
+                        unsafe_allow_html=True,
+                    )
+                elif st.button("이동", type="secondary", use_container_width=True,
                                key=f"room_open_{room_id}"):
-                st.session_state["active_room_id"] = room_id
-                st.rerun()
+                    st.session_state["active_room_id"] = room_id
+                    st.rerun()
     return next(r for r in rooms if str(r["id"]) == current)
 
 
-@st.dialog("이 방에 참여한 멤버")
+@st.dialog("이 방에 참여한 멤버", width="small")
 def show_member_list_dialog(room_id, members, current_user_id, host_id):
     st.write(f"총 {len(members)}명")
     display_map = session_display_map(members)
@@ -1336,164 +1352,173 @@ def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     # Keep Streamlit's running/stale state from dimming the app during component events.
     st.markdown("""<style>
-    [data-stale],
-    [data-testid="stAppViewContainer"],
-    [data-testid="stAppViewBlockContainer"],
-    [data-testid="stMain"],
-    [data-testid="stMainBlockContainer"],
-    section.main,
-    section.main > div {
-      opacity: 1 !important;
-      filter: none !important;
+    [data-stale], [data-testid="stAppViewContainer"], [data-testid="stAppViewBlockContainer"],
+    [data-testid="stMain"], [data-testid="stMainBlockContainer"], section.main, section.main > div {
+      opacity: 1 !important; filter: none !important;
     }
-    [data-stale] *,
-    [aria-busy="true"] {
-      opacity: 1 !important;
-      filter: none !important;
-    }
-    /* Hide Streamlit's heading permalink icons; they are not needed in this app. */
-    [data-testid="stHeaderActionElements"],
-    a[data-testid="stHeaderActionElements"],
-    [data-testid="stMarkdownContainer"] h1 a,
-    [data-testid="stMarkdownContainer"] h2 a,
-    [data-testid="stMarkdownContainer"] h3 a {
-      display: none !important;
-      visibility: hidden !important;
-    }
-    /* 앱 전체의 기존 코랄 포인트(#CF4250)를 블루로 통일한다.
-       시간표의 상태색(합주 불가 = 빨강)은 의미 전달용이므로 변경하지 않는다. */
+    [data-stale] *, [aria-busy="true"] { opacity: 1 !important; filter: none !important; }
+    [data-testid="stHeaderActionElements"], a[data-testid="stHeaderActionElements"],
+    [data-testid="stMarkdownContainer"] h1 a, [data-testid="stMarkdownContainer"] h2 a,
+    [data-testid="stMarkdownContainer"] h3 a { display:none !important; visibility:hidden !important; }
+
     :root {
-      --primary-color: #2563EB !important;
-      --color-primary: #2563EB !important;
-      --st-primary-color: #2563EB !important;
-      --accent-color: #2563EB !important;
-      --primary: #2563EB !important;
-      --primary-50: #EFF6FF !important;
-      --primary-100: #DBEAFE !important;
-      --primary-600: #2563EB !important;
-      --primary-700: #1D4ED8 !important;
-      --color-primary-light: #DBEAFE !important;
-      --color-primary-dark: #1D4ED8 !important;
-      --st-color-primary: #2563EB !important;
-      --st-color-primary-bg: #EFF6FF !important;
-      --st-color-primary-hover: #1D4ED8 !important;
+      --primary-color: #2563EB !important; --color-primary: #2563EB !important;
+      --st-primary-color: #2563EB !important; --accent-color: #2563EB !important;
+      --primary: #2563EB !important; --primary-50: #EFF6FF !important;
+      --primary-100: #DBEAFE !important; --primary-600: #2563EB !important;
+      --primary-700: #1D4ED8 !important; --color-primary-light: #DBEAFE !important;
+      --color-primary-dark: #1D4ED8 !important; --st-color-primary: #2563EB !important;
+      --st-color-primary-bg: #EFF6FF !important; --st-color-primary-hover: #1D4ED8 !important;
       --st-color-primary-active: #1E40AF !important;
+      --hap-panel-gradient: linear-gradient(145deg, var(--secondary-background-color, #FFFFFF), color-mix(in srgb, var(--secondary-background-color, #FFFFFF) 90%, var(--background-color, #F7F9FD)));
+      --hap-button-gradient: linear-gradient(145deg, var(--secondary-background-color, #FFFFFF), color-mix(in srgb, var(--secondary-background-color, #FFFFFF) 88%, var(--background-color, #F1F5F9)));
+      --hap-shadow-raised: 5px 5px 14px rgba(30,41,59,.055), -4px -4px 12px rgba(255,255,255,.28);
+      --hap-shadow-inset: inset 2px 2px 5px rgba(30,41,59,.075), inset -2px -2px 5px rgba(255,255,255,.22);
+      --hap-heading: var(--text-color, #172554);
+      --hap-button-text: var(--text-color, #334155);
+      --hap-chip-bg: color-mix(in srgb, #2563EB 11%, var(--secondary-background-color, #FFFFFF));
+      --hap-chip-text: #1D4ED8;
+      --hap-track: var(--secondary-background-color, #EEF2F8);
+      --hap-border: rgba(148,163,184,.20);
     }
-    button[kind="primary"],
-    [data-testid="stBaseButton-primary"],
+    /* Streamlit dark themes expose data-theme on the app/document depending on version. */
+    html[data-theme="dark"], body[data-theme="dark"], [data-theme="dark"] {
+      --hap-panel-gradient: linear-gradient(145deg, #272D38, #202630);
+      --hap-button-gradient: linear-gradient(145deg, #2B323E, #222832);
+      --hap-shadow-raised: 5px 5px 14px rgba(0,0,0,.28), -3px -3px 10px rgba(255,255,255,.025);
+      --hap-shadow-inset: inset 2px 2px 5px rgba(0,0,0,.22), inset -2px -2px 5px rgba(255,255,255,.025);
+      --hap-heading: #F1F5F9;
+      --hap-button-text: #E2E8F0;
+      --hap-chip-bg: rgba(37,99,235,.19);
+      --hap-chip-text: #93C5FD;
+      --hap-track: #222A35;
+      --hap-border: rgba(148,163,184,.18);
+    }
+
+    [data-testid="stAppViewContainer"] {
+      background: var(--background-color, #F5F7FB) !important;
+      color: var(--text-color, #1F2937) !important;
+    }
+    button[kind="primary"], [data-testid="stBaseButton-primary"],
     [data-testid="stFormSubmitButton"] button {
-      background: #2563EB !important;
-      border-color: #2563EB !important;
-      color: #fff !important;
+      background: #2563EB !important; border-color: #2563EB !important; color:#fff !important;
     }
-    button[kind="primary"]:hover,
-    [data-testid="stBaseButton-primary"]:hover,
+    button[kind="primary"]:hover, [data-testid="stBaseButton-primary"]:hover,
     [data-testid="stFormSubmitButton"] button:hover {
-      background: #1D4ED8 !important;
-      border-color: #1D4ED8 !important;
+      background:#1D4ED8 !important; border-color:#1D4ED8 !important;
     }
-    /* Main navigation: 내 합주실 / 방 만들기 / 방 참여하기 */
     [data-testid="stSegmentedControl"] button[aria-pressed="true"],
     [data-testid="stSegmentedControl"] button[data-selected="true"],
     [data-baseweb="button-group"] button[aria-pressed="true"] {
-      background: #2563EB !important;
-      border-color: #2563EB !important;
-      color: #fff !important;
+      background:#2563EB !important; border-color:#2563EB !important; color:#fff !important;
     }
-    /* Inner tabs: 내 일정 입력 / 합주 가능 시간 / 멤버별 일정 / 방장 설정 */
     [data-testid="stTabs"] button[role="tab"][aria-selected="true"],
     [data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"],
     [data-testid="stTabs"] button[aria-selected="true"] {
-      color: #2563EB !important;
-      border-bottom-color: #2563EB !important;
+      color:#2563EB !important; border-bottom-color:#2563EB !important;
     }
     [data-testid="stTabs"] [data-baseweb="tab-highlight"],
     [data-testid="stTabs"] [data-baseweb="tab-border"] {
-      background-color: #2563EB !important;
-      border-color: #2563EB !important;
+      background-color:#2563EB !important; border-color:#2563EB !important;
     }
-    /* Radio/checkbox selection, input focus and keyboard focus rings. */
-    [data-testid="stCheckbox"] input:checked + div,
-    [data-testid="stRadio"] input:checked + div,
+    [data-testid="stCheckbox"] input:checked + div, [data-testid="stRadio"] input:checked + div,
     [data-testid="stCheckbox"] label:has(input:checked) > div,
-    [data-testid="stRadio"] label:has(input:checked) > div {
-      border-color: #2563EB !important;
-    }
-    [data-baseweb="select"]:focus-within,
-    [data-baseweb="input"]:focus-within,
-    [data-baseweb="textarea"]:focus-within,
-    [data-testid="stTextInput"] input:focus,
+    [data-testid="stRadio"] label:has(input:checked) > div { border-color:#2563EB !important; }
+    [data-baseweb="select"]:focus-within, [data-baseweb="input"]:focus-within,
+    [data-baseweb="textarea"]:focus-within, [data-testid="stTextInput"] input:focus,
     [data-testid="stDateInput"] input:focus {
-      border-color: #2563EB !important;
-      box-shadow: 0 0 0 1px #2563EB !important;
+      border-color:#2563EB !important; box-shadow:0 0 0 1px #2563EB !important;
     }
-    button:focus-visible, [role="tab"]:focus-visible {
-      outline-color: #2563EB !important;
+    button:focus-visible, [role="tab"]:focus-visible { outline-color:#2563EB !important; }
+    a, [data-testid="stMarkdownContainer"] a { color:#2563EB; }
+    [data-baseweb="checkbox"] [aria-checked="true"], [data-baseweb="radio"] [aria-checked="true"] {
+      border-color:#2563EB !important;
     }
-    a, [data-testid="stMarkdownContainer"] a { color: #2563EB; }
-    [data-baseweb="checkbox"] [aria-checked="true"],
-    [data-baseweb="radio"] [aria-checked="true"] { border-color: #2563EB !important; }
-    /* Keep the three main navigation choices evenly distributed. */
-    div[data-testid="stSegmentedControl"] { width: 100%; margin-bottom: 1rem; }
-    div[data-testid="stSegmentedControl"] > div { width: 100%; }
-    div[data-testid="stSegmentedControl"] button { flex: 1 1 0; justify-content: center; font-weight: 600; }
 
-    /* 절제된 뉴모피즘: 과한 입체감 대신 낮은 대비의 그림자와 밝은 면만 사용 */
-    [data-testid="stAppViewContainer"] { background: #F5F7FB; }
+    /* Low-contrast neumorphism, with shadows and surfaces adapted to the active theme. */
     [data-testid="stVerticalBlockBorderWrapper"] {
-      border: 1px solid rgba(148,163,184,.16) !important;
-      border-radius: 16px !important;
-      background: linear-gradient(145deg, #FFFFFF, #F7F9FD) !important;
-      box-shadow: 5px 5px 14px rgba(30,41,59,.055), -4px -4px 12px rgba(255,255,255,.9) !important;
+      border:1px solid var(--hap-border) !important; border-radius:16px !important;
+      background:var(--hap-panel-gradient) !important; box-shadow:var(--hap-shadow-raised) !important;
     }
     [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"] {
-      border-radius: 11px !important;
-      transition: box-shadow .16s ease, transform .16s ease, background .16s ease;
+      border-radius:11px !important; transition:box-shadow .16s ease, transform .16s ease, background .16s ease;
     }
     [data-testid="stBaseButton-secondary"] {
-      background: linear-gradient(145deg, #FFFFFF, #F1F5F9) !important;
-      border: 1px solid rgba(148,163,184,.22) !important;
-      box-shadow: 3px 3px 7px rgba(30,41,59,.07), -2px -2px 6px rgba(255,255,255,.9) !important;
-      color: #334155 !important;
+      background:var(--hap-button-gradient) !important; border:1px solid var(--hap-border) !important;
+      box-shadow:var(--hap-shadow-raised) !important; color:var(--hap-button-text) !important;
     }
     [data-testid="stBaseButton-secondary"]:hover {
-      box-shadow: inset 2px 2px 5px rgba(30,41,59,.07), inset -2px -2px 5px rgba(255,255,255,.9) !important;
-      border-color: rgba(37,99,235,.3) !important;
-      color: #1D4ED8 !important;
+      box-shadow:var(--hap-shadow-inset) !important; border-color:rgba(37,99,235,.45) !important;
+      color:#2563EB !important;
     }
-    [data-testid="stBaseButton-primary"] {
-      box-shadow: 3px 3px 8px rgba(37,99,235,.18), -2px -2px 6px rgba(255,255,255,.25) !important;
-    }
+    [data-testid="stBaseButton-primary"] { box-shadow:3px 3px 8px rgba(37,99,235,.18) !important; }
+
     .app-brand-title {
-      text-align: center; font-size: clamp(1.65rem, 3vw, 2.25rem);
-      font-weight: 800; letter-spacing: -.055em; color: #172554;
-      padding: .35rem 0 .7rem;
+      width:100%; box-sizing:border-box; text-align:center; font-size:clamp(1.65rem, 3vw, 2.25rem);
+      font-weight:800; letter-spacing:-.055em; color:var(--hap-heading);
+      padding:.28rem 0 .78rem; margin:0 auto;
     }
     .room-current-state {
-      text-align: center; padding: .48rem .35rem; border-radius: 10px;
-      color: #1D4ED8; font-weight: 700; font-size: .88rem;
-      background: #EAF1FF; border: 1px solid rgba(37,99,235,.14);
-      box-shadow: inset 2px 2px 4px rgba(37,99,235,.06), inset -2px -2px 4px rgba(255,255,255,.9);
+      text-align:center; padding:.48rem .35rem; border-radius:10px;
+      color:var(--hap-chip-text); font-weight:700; font-size:.88rem;
+      background:var(--hap-chip-bg); border:1px solid rgba(37,99,235,.18);
+      box-shadow:var(--hap-shadow-inset);
     }
-    /* 제목과 상단 메뉴를 같은 중앙 축에 맞춘다. */
-    div[data-testid="stSegmentedControl"] { max-width: 760px; margin: 0 auto 1.35rem !important; }
-    div[data-testid="stSegmentedControl"] > div { border-radius: 14px; padding: 4px; background: #EEF2F8; box-shadow: inset 2px 2px 5px rgba(30,41,59,.08), inset -2px -2px 5px #fff; }
-    div[data-testid="stSegmentedControl"] button { border-radius: 10px !important; }
+    .schedule-tools-heading {
+      min-height:2.75rem; display:flex; align-items:center; box-sizing:border-box;
+      color:var(--text-color, #1F2937); font-size:1rem; font-weight:750; letter-spacing:-.02em;
+    }
+    .room-card-title { font-size:1.05rem; font-weight:750; line-height:1.35; color:var(--text-color, #1F2937); }
+    div.st-key-room-create-form, div.st-key-room-join-form {
+      width:100% !important; max-width:680px !important; margin-left:auto !important; margin-right:auto !important;
+    }
+    div.st-key-room-carousel > div[data-testid="stVerticalBlock"] {
+      display:flex !important; flex-flow:row nowrap !important; align-items:stretch !important;
+      gap:14px !important; overflow-x:auto !important; overflow-y:hidden !important;
+      padding:8px 5px 15px !important; scroll-snap-type:x mandatory; scrollbar-width:thin;
+    }
+    div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div {
+      flex:0 0 258px !important; width:258px !important; min-width:258px !important;
+      max-width:258px !important; scroll-snap-align:start;
+    }
+    div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
+      display:grid !important; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)) !important;
+      align-items:stretch !important; gap:14px !important;
+    }
+    div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] > div {
+      min-width:0 !important; width:auto !important; max-width:none !important;
+    }
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] { min-height:148px !important; }
+    div.st-key-main_section_radio { max-width:760px !important; width:100% !important; margin:0 auto 1.35rem !important; }
+    div[data-testid="stSegmentedControl"] { max-width:760px !important; width:100% !important; margin:0 auto 1.35rem !important; }
+    div[data-testid="stSegmentedControl"] > div {
+      width:100% !important; border-radius:14px; padding:4px;
+      background:var(--hap-track) !important; box-shadow:var(--hap-shadow-inset) !important;
+    }
+    div[data-testid="stSegmentedControl"] button { flex:1 1 0; justify-content:center; font-weight:650; border-radius:10px !important; }
+    @media (max-width: 680px) {
+      div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div {
+        flex-basis: min(78vw, 258px) !important; width:min(78vw, 258px) !important;
+        min-width:min(78vw, 258px) !important; max-width:min(78vw, 258px) !important;
+      }
+      div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
+        grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)) !important;
+      }
+    }
     </style>""", unsafe_allow_html=True)
     require_login()
     global SUPABASE
     SUPABASE=get_supabase(); user_id=current_user_id()
-    # 상단 브랜드 영역: 제목은 중앙, 로그아웃은 우측에 배치한다.
-    head_left, head_center, head_right = st.columns([1, 5, 1], vertical_alignment="center")
-    with head_center:
-        st.markdown(f'<div class="app-brand-title">{APP_TITLE}</div>', unsafe_allow_html=True)
-    with head_right:
+    # 로그아웃은 별도 우측 정렬 행에 두고, 제목은 화면 전체를 기준으로 중앙 정렬한다.
+    _logout_spacer, logout_col = st.columns([7, 1], vertical_alignment="center")
+    with logout_col:
         if st.button('로그아웃', use_container_width=True, key="top_logout"):
             try:
                 SUPABASE.auth.sign_out()
             finally:
                 st.session_state.pop("_hapjugi_supabase_client", None)
                 st.logout()
+    st.markdown(f'<div class="app-brand-title">{APP_TITLE}</div>', unsafe_allow_html=True)
 
     # Apply navigation requests before creating the radio widget; Streamlit
     # does not allow changing a widget's own session-state key afterward.
@@ -1502,9 +1527,7 @@ def main():
     pending_section = st.session_state.pop("pending_main_section", None)
     if pending_section in ["내 합주실", "방 만들기", "방 참여하기"]:
         st.session_state["main_section_radio"] = pending_section
-    nav_left, nav_center, nav_right = st.columns([1, 5, 1])
-    with nav_center:
-        section=st.segmented_control('메뉴',['내 합주실','방 만들기','방 참여하기'],key='main_section_radio',label_visibility='collapsed')
+    section=st.segmented_control('메뉴',['내 합주실','방 만들기','방 참여하기'],key='main_section_radio',label_visibility='collapsed')
     if section is None:
         section = '내 합주실'
     if section=='내 합주실':
