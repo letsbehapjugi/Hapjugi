@@ -1238,14 +1238,14 @@ def show_my_rooms(user_id: str):
         st.info("아직 참여한 합주 방이 없습니다. 방을 만들거나 초대 코드로 참여해 주세요.")
         return None
 
+    # Load each room's member list once. The selected room reuses this data below.
+    for room in rooms:
+        room["_members"] = get_members(str(room["id"]))
+
     expanded_key = "_hapjugi_rooms_expanded"
     expanded = bool(st.session_state.get(expanded_key, False))
-    title_col, toggle_col = st.columns([5.8, 1], vertical_alignment="center")
+    title_col, toggle_col = st.columns([8, 1], vertical_alignment="center")
     title_col.markdown("#### 내 합주실")
-    title_col.caption(
-        "모든 합주실을 펼쳐 보고 있습니다." if expanded
-        else "카드를 좌우로 밀어 다른 합주실을 확인하세요."
-    )
     if toggle_col.button(
         "접기" if expanded else "펼치기",
         use_container_width=False,
@@ -1260,57 +1260,65 @@ def show_my_rooms(user_id: str):
         current = ids[0]
         st.session_state["active_room_id"] = current
 
+    card_width, card_height = (320, 198) if expanded else (362, 224)
     carousel_key = "room-carousel-expanded" if expanded else "room-carousel"
-    with st.container(key=carousel_key):
+    # horizontal=True sets the actual Streamlit layout direction. In collapsed
+    # mode CSS prevents wrapping; in expanded mode cards wrap into a compact grid.
+    with st.container(
+        key=carousel_key,
+        horizontal=True,
+        gap="medium",
+        vertical_alignment="center",
+    ):
         for idx, room in enumerate(rooms):
             room_id = str(room["id"])
             is_selected = room_id == current
-            is_host = str(room.get("host_id")) == str(user_id)
+            members = room.get("_members") or []
+            member_count = len(members)
+            my_member = next(
+                (member for member in members if str(member.get("user_id")) == str(user_id)),
+                room.get("my_membership", {}),
+            )
+            my_session = str(my_member.get("session") or "미지정")
             safe_room_name = html.escape(str(room.get("room_name") or "이름 없는 합주실"))
-            role_label = "방장" if is_host else "멤버"
-            description = "현재 선택된 합주실입니다." if is_selected else "이 합주실로 전환해 일정을 확인하세요."
-
+            safe_session = html.escape(my_session)
             card_key = f"room-card-selected-{idx}" if is_selected else f"room-card-{idx}"
-            with st.container(key=card_key, border=True):
+
+            with st.container(
+                key=card_key,
+                border=True,
+                width=card_width,
+                height=card_height,
+            ):
                 st.markdown(
                     f'''<div class="room-card-content">
-                        <div class="room-card-head">
-                            <span class="room-card-eyebrow">합주실</span>
-                            <span class="room-card-role">{role_label}</span>
-                        </div>
-                        <div class="room-card-main">
-                            <div class="room-card-name">{safe_room_name}</div>
-                            <div class="room-card-description">{description}</div>
+                        <div class="room-card-name">{safe_room_name}</div>
+                        <div class="room-card-meta">
+                            <div class="room-card-meta-item">
+                                <span class="room-card-meta-label">멤버</span>
+                                <strong class="room-card-meta-value">{member_count}명</strong>
+                            </div>
+                            <div class="room-card-meta-item">
+                                <span class="room-card-meta-label">내 세션</span>
+                                <strong class="room-card-meta-value">{safe_session}</strong>
+                            </div>
                         </div>
                     </div>''',
                     unsafe_allow_html=True,
                 )
-                action_col, badge_col = st.columns([1.35, 1], vertical_alignment="center")
-                with action_col:
-                    if is_selected:
-                        st.markdown(
-                            '<div class="room-card-footnote"><span class="room-card-dot"></span>현재 사용 중</div>',
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.markdown(
-                            '<div class="room-card-footnote">다른 합주실</div>',
-                            unsafe_allow_html=True,
-                        )
-                with badge_col:
-                    if is_selected:
-                        st.markdown(
-                            '<div class="room-card-selected-badge">선택됨</div>',
-                            unsafe_allow_html=True,
-                        )
-                    elif st.button(
-                        "이동",
-                        type="primary",
-                        use_container_width=True,
-                        key=f"room_open_{room_id}",
-                    ):
-                        st.session_state["active_room_id"] = room_id
-                        st.rerun()
+                if is_selected:
+                    st.markdown(
+                        '<div class="room-card-selected-badge">선택됨</div>',
+                        unsafe_allow_html=True,
+                    )
+                elif st.button(
+                    "이동",
+                    type="primary",
+                    use_container_width=False,
+                    key=f"room_open_{room_id}",
+                ):
+                    st.session_state["active_room_id"] = room_id
+                    st.rerun()
 
     return next(r for r in rooms if str(r["id"]) == current)
 
@@ -1379,7 +1387,10 @@ def show_member_list_dialog(room_id, members, current_user_id, host_id):
 def show_active_room(user_id: str):
     room=show_my_rooms(user_id)
     if not room: return
-    members=get_members(room['id']); me=next((m for m in members if m['user_id']==user_id),None)
+    members = room.get("_members")
+    if members is None:
+        members = get_members(room['id'])
+    me=next((m for m in members if str(m['user_id'])==str(user_id)),None)
     if not me: st.error('이 방의 멤버 정보를 찾지 못했습니다.'); return
     windows=get_windows(room)
     title, member_action, leave_action = st.columns([5, 1.5, 1])
@@ -1552,27 +1563,53 @@ def main():
       white-space:normal !important; padding:.8rem !important; font-weight:700;
     }
 
-    /* Room selector: a real horizontal carousel by default, a compact grid when expanded. */
+    /* Room selector: a true horizontal Streamlit flex container, not a vertical stack. */
     div.st-key-toggle_room_list_layout {
       display:flex !important; justify-content:flex-end !important; align-items:center !important;
     }
     div.st-key-toggle_room_list_layout [data-testid="stBaseButton-secondary"] {
-      width:auto !important; min-width:78px !important; min-height:34px !important;
-      height:34px !important; padding:.35rem .8rem !important; font-size:.82rem !important;
+      width:auto !important; min-width:72px !important; min-height:32px !important;
+      height:32px !important; padding:.25rem .7rem !important; font-size:.82rem !important;
       border-radius:999px !important;
     }
-    div.st-key-room-carousel > div[data-testid="stVerticalBlock"] {
-      display:flex !important; flex-flow:row nowrap !important; align-items:stretch !important;
-      gap:16px !important; overflow-x:auto !important; overflow-y:hidden !important;
-      padding:8px 5px 18px !important; scroll-snap-type:x mandatory;
-      scrollbar-width:thin; overscroll-behavior-x:contain; touch-action:pan-x pan-y;
+
+    div.st-key-room-carousel {
+      display:flex !important; flex-direction:row !important; flex-wrap:nowrap !important;
+      align-items:stretch !important; justify-content:flex-start !important;
+      gap:16px !important; width:100% !important; max-width:100% !important;
+      overflow-x:auto !important; overflow-y:hidden !important;
+      padding:8px 4px 18px !important; box-sizing:border-box !important;
+      scroll-snap-type:x mandatory !important; scrollbar-width:thin !important;
+      overscroll-behavior-x:contain !important; touch-action:pan-x pan-y !important;
     }
-    div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div,
+    div.st-key-room-carousel > [data-testid="stElementContainer"],
+    div.st-key-room-carousel > div:not([data-testid="stHorizontalBlock"]):not([data-testid="stVerticalBlock"]) {
+      flex:0 0 362px !important; width:362px !important; min-width:362px !important;
+      max-width:362px !important; box-sizing:border-box !important;
+    }
     div.st-key-room-carousel div[class*="st-key-room-card-"] {
       flex:0 0 362px !important; width:362px !important; min-width:362px !important;
       max-width:362px !important; height:224px !important; min-height:224px !important;
       max-height:224px !important; box-sizing:border-box !important; scroll-snap-align:start;
     }
+
+    div.st-key-room-carousel-expanded {
+      display:flex !important; flex-direction:row !important; flex-wrap:wrap !important;
+      align-items:stretch !important; justify-content:flex-start !important;
+      gap:16px !important; width:100% !important; max-width:100% !important;
+      overflow:visible !important; padding:8px 4px 12px !important; box-sizing:border-box !important;
+    }
+    div.st-key-room-carousel-expanded > [data-testid="stElementContainer"],
+    div.st-key-room-carousel-expanded > div:not([data-testid="stHorizontalBlock"]):not([data-testid="stVerticalBlock"]) {
+      flex:0 0 320px !important; width:320px !important; min-width:320px !important;
+      max-width:320px !important; box-sizing:border-box !important;
+    }
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
+      flex:0 0 320px !important; width:320px !important; min-width:320px !important;
+      max-width:320px !important; height:198px !important; min-height:198px !important;
+      max-height:198px !important; box-sizing:border-box !important;
+    }
+
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] {
       display:flex !important; width:100% !important; min-width:100% !important;
       max-width:100% !important; height:100% !important; min-height:100% !important;
@@ -1590,112 +1627,88 @@ def main():
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
       width:100% !important; height:100% !important; min-height:100% !important;
-      box-sizing:border-box !important; padding:17px 19px 16px !important;
+      box-sizing:border-box !important; padding:19px 21px 15px !important;
       display:flex !important; flex-direction:column !important;
-      justify-content:flex-start !important; gap:10px !important;
+      justify-content:space-between !important; gap:10px !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > div:last-child {
-      margin-top:auto !important;
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:first-child {
+      flex:1 1 auto !important; width:100% !important; min-height:0 !important;
+      display:flex !important; align-items:center !important; margin:0 !important;
+    }
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:last-child {
+      flex:0 0 auto !important; width:100% !important; margin:0 !important;
+      display:flex !important; justify-content:flex-end !important; align-items:center !important;
     }
     div[class*="st-key-room-card-"] .room-card-content {
-      display:flex; flex-direction:column; gap:15px; min-height:0; width:100%;
-    }
-    div[class*="st-key-room-card-"] .room-card-head {
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
-      min-height:22px;
-    }
-    div[class*="st-key-room-card-"] .room-card-eyebrow {
-      font-size:.67rem; line-height:1; letter-spacing:.12em; font-weight:800;
-      color:var(--hap-muted); opacity:.9;
-    }
-    div[class*="st-key-room-card-"] .room-card-role {
-      display:inline-flex; align-items:center; justify-content:center;
-      min-width:42px; padding:4px 9px; border-radius:999px;
-      color:#2563EB; background:color-mix(in srgb, #2563EB 10%, var(--hap-surface));
-      border:1px solid color-mix(in srgb, #2563EB 20%, var(--hap-border));
-      font-size:.72rem; font-weight:750; white-space:nowrap;
-    }
-    div[class*="st-key-room-card-"] .room-card-main {
-      display:flex; flex-direction:column; gap:7px; min-width:0;
+      display:flex; flex:1 1 auto; flex-direction:column; justify-content:center;
+      gap:19px; height:100%; min-height:0; width:100%; box-sizing:border-box;
     }
     div[class*="st-key-room-card-"] .room-card-name {
-      color:var(--hap-text); font-size:1.24rem; line-height:1.32;
+      color:var(--hap-text); font-size:1.34rem; line-height:1.28;
       font-weight:800; letter-spacing:-.045em; overflow-wrap:anywhere;
       display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
-      min-height:2.6em;
     }
-    div[class*="st-key-room-card-"] .room-card-description {
-      color:var(--hap-muted); font-size:.82rem; line-height:1.35;
-      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    div[class*="st-key-room-card-"] .room-card-meta {
+      display:flex; align-items:center; flex-wrap:wrap; gap:9px;
     }
-    div[class*="st-key-room-card-"] [data-testid="stHorizontalBlock"] {
-      width:100% !important; min-height:40px !important; align-items:center !important;
-      gap:10px !important; margin-top:auto !important;
+    div[class*="st-key-room-card-"] .room-card-meta-item {
+      display:inline-flex; align-items:center; gap:8px; min-height:35px;
+      box-sizing:border-box; padding:7px 11px; border-radius:10px;
+      background:color-mix(in srgb, #2563EB 6%, var(--hap-surface));
+      border:1px solid color-mix(in srgb, #2563EB 16%, var(--hap-border));
     }
-    div[class*="st-key-room-card-"] .room-card-footnote {
-      display:flex; align-items:center; gap:7px; min-height:36px;
-      color:var(--hap-muted); font-size:.82rem; font-weight:650;
+    div[class*="st-key-room-card-"] .room-card-meta-label {
+      color:var(--hap-muted); font-size:.76rem; font-weight:650; white-space:nowrap;
     }
-    div[class*="st-key-room-card-"] .room-card-dot {
-      width:8px; height:8px; flex:0 0 8px; border-radius:50%;
-      background:#2563EB; box-shadow:0 0 0 4px color-mix(in srgb, #2563EB 12%, transparent);
+    div[class*="st-key-room-card-"] .room-card-meta-value {
+      color:var(--hap-text); font-size:.84rem; font-weight:800; white-space:nowrap;
+    }
+    div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
+      width:92px !important; min-width:92px !important; min-height:38px !important;
+      height:38px !important; padding:.4rem .8rem !important; margin-left:auto !important;
+      border-radius:11px !important; font-size:.84rem !important; font-weight:750 !important;
+      box-shadow:0 4px 10px rgba(37,99,235,.18) !important;
     }
     div[class*="st-key-room-card-"] .room-card-selected-badge {
-      display:flex; align-items:center; justify-content:center; min-height:38px;
-      border-radius:11px; color:#2563EB; font-size:.83rem; font-weight:800;
+      display:flex; align-items:center; justify-content:center; margin-left:auto;
+      width:92px; min-height:38px; box-sizing:border-box; border-radius:11px;
+      color:#2563EB; font-size:.84rem; font-weight:800;
       background:color-mix(in srgb, #2563EB 11%, var(--hap-surface));
       border:1px solid color-mix(in srgb, #2563EB 24%, var(--hap-border));
       box-shadow:var(--hap-shadow-inset);
     }
-    div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
-      min-height:38px !important; height:38px !important; padding:.4rem .9rem !important;
-      border-radius:11px !important; font-size:.84rem !important; font-weight:750 !important;
-      box-shadow:0 4px 10px rgba(37,99,235,.18) !important;
-    }
 
-    /* Expanded mode uses smaller landscape cards; the complete set is shown in a wrapping grid. */
-    div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
-      display:grid !important;
-      grid-template-columns:repeat(auto-fit, minmax(min(100%, 290px), 320px)) !important;
-      align-items:stretch !important; justify-content:center !important; align-content:start !important;
-      gap:16px !important; overflow:visible !important; padding:8px 0 12px !important;
-    }
-    div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] > div,
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
-      flex:none !important; width:320px !important; min-width:0 !important;
-      max-width:320px !important; height:198px !important; min-height:198px !important;
-      max-height:198px !important; box-sizing:border-box !important;
-    }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > div {
-      padding:14px 16px 13px !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
+      padding:15px 17px 12px !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-content {
-      gap:10px !important;
+      gap:14px !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-name {
-      font-size:1.08rem !important; min-height:2.5em !important;
+      font-size:1.16rem !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-description {
-      font-size:.76rem !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-item {
+      min-height:32px !important; padding:6px 9px !important; gap:6px !important;
+    }
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-label {
+      font-size:.72rem !important;
+    }
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-value {
+      font-size:.79rem !important;
     }
 
     @media (max-width: 680px) {
-      div.st-key-main_section_radio, div[data-testid="stSegmentedControl"] { width:100% !important; }
-      div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div,
       div.st-key-room-carousel div[class*="st-key-room-card-"] {
         flex:0 0 min(362px, 86vw) !important; width:min(362px, 86vw) !important;
         min-width:min(362px, 86vw) !important; max-width:min(362px, 86vw) !important;
         height:auto !important; aspect-ratio:362 / 224 !important;
         min-height:0 !important; max-height:none !important;
       }
-      div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
-        grid-template-columns:minmax(0, min(320px, 88vw)) !important;
-      }
-      div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] > div,
       div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
-        width:min(320px, 88vw) !important; min-width:0 !important;
-        max-width:min(320px, 88vw) !important; height:auto !important;
-        aspect-ratio:320 / 198 !important; min-height:0 !important; max-height:none !important;
+        flex:0 0 min(320px, 88vw) !important; width:min(320px, 88vw) !important;
+        min-width:min(320px, 88vw) !important; max-width:min(320px, 88vw) !important;
+        height:auto !important; aspect-ratio:320 / 198 !important;
+        min-height:0 !important; max-height:none !important;
       }
     }
     </style>""", unsafe_allow_html=True)
