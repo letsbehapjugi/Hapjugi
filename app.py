@@ -1511,44 +1511,57 @@ def main():
       white-space:normal !important; padding:.8rem !important; font-weight:700;
     }
 
-    /* Fixed landscape room cards: width 362px × height 224px (near the golden ratio). */
+    /* Room cards: enforce the landscape dimensions on both Streamlit's outer
+       flex/grid item and the keyed container itself. Styling only the inner
+       border wrapper does not constrain the actual carousel item. */
     div.st-key-room-carousel > div[data-testid="stVerticalBlock"] {
       display:flex !important; flex-flow:row nowrap !important; align-items:stretch !important;
       gap:14px !important; overflow-x:auto !important; overflow-y:hidden !important;
       padding:8px 5px 15px !important; scroll-snap-type:x mandatory; scrollbar-width:thin;
     }
-    div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div {
+    div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div,
+    div.st-key-room-carousel div[class*="st-key-room-card-"] {
       flex:0 0 362px !important; width:362px !important; min-width:362px !important;
-      max-width:362px !important; scroll-snap-align:start;
+      max-width:362px !important; height:224px !important; min-height:224px !important;
+      max-height:224px !important; box-sizing:border-box !important; scroll-snap-align:start;
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] {
-      width:362px !important; min-width:362px !important; max-width:362px !important;
-      height:224px !important; min-height:224px !important; max-height:224px !important;
-      aspect-ratio:362 / 224 !important; box-sizing:border-box !important; overflow:hidden !important;
+      display:flex !important; width:100% !important; min-width:100% !important;
+      max-width:100% !important; height:100% !important; min-height:100% !important;
+      max-height:100% !important; aspect-ratio:362 / 224 !important;
+      box-sizing:border-box !important; overflow:hidden !important;
     }
-    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > div {
-      height:100% !important; min-height:100% !important;
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > div,
+    div[class*="st-key-room-card-"] [data-testid="stVerticalBlock"] {
+      width:100% !important; height:100% !important; min-height:100% !important;
+      box-sizing:border-box !important;
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlock"] {
-      height:100% !important; display:flex !important; flex-direction:column !important;
+      display:flex !important; flex-direction:column !important;
       justify-content:flex-start !important; gap:.7rem !important;
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlock"] > div:last-child { margin-top:auto !important; }
+
     div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
-      display:grid !important; grid-template-columns:repeat(auto-fill, 362px) !important;
+      display:grid !important; grid-template-columns:repeat(auto-fit, 362px) !important;
       align-items:stretch !important; justify-content:center !important; gap:14px !important;
     }
-    div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] > div {
-      min-width:0 !important; width:362px !important; max-width:362px !important;
+    div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] > div,
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
+      flex:none !important; width:362px !important; min-width:362px !important;
+      max-width:362px !important; height:224px !important; min-height:224px !important;
+      max-height:224px !important; box-sizing:border-box !important;
     }
     @media (max-width: 680px) {
       div.st-key-main_section_radio, div[data-testid="stSegmentedControl"] { width:100% !important; }
-      div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div {
+      div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div,
+      div.st-key-room-carousel div[class*="st-key-room-card-"] {
         flex-basis:362px !important; width:362px !important;
         min-width:362px !important; max-width:362px !important;
+        height:224px !important; min-height:224px !important; max-height:224px !important;
       }
       div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
-        grid-template-columns:repeat(auto-fill, minmax(362px, 362px)) !important;
+        grid-template-columns:repeat(auto-fit, 362px) !important;
       }
     }
     </style>""", unsafe_allow_html=True)
