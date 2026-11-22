@@ -924,14 +924,18 @@ def show_schedule_input(room, user_id, windows):
     elif saved_notice:
         st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
 
-    # 왼쪽: 버튼 - 제목 - 버튼을 한 줄로 배치. 오른쪽: 전체 삭제.
-    bulk_col, clear_col = st.columns(2, gap="large", vertical_alignment="center")
+    # 일괄 설정 제목은 두 버튼 위의 중앙에 배치하고, 전체 삭제는 별도로 둔다.
     reset_token_key = f"schedule_reset_{room['id']}"
     mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
+    bulk_col, clear_col = st.columns([2.2, 1], gap="large", vertical_alignment="center")
 
     with bulk_col:
         with st.container(key=f"bulk-family-{room['id']}", border=True):
-            yes_col, heading_col, no_col = st.columns([1, 1.15, 1], gap="small", vertical_alignment="center")
+            st.markdown(
+                '<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>',
+                unsafe_allow_html=True,
+            )
+            yes_col, no_col = st.columns(2, gap="medium", vertical_alignment="center")
             with yes_col:
                 if st.button("합주 완전 가능", use_container_width=True,
                              key=f"bulk_yes_{room['id']}"):
@@ -941,11 +945,6 @@ def show_schedule_input(room, user_id, windows):
                         st.rerun()
                     except Exception as exc:
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
-            with heading_col:
-                st.markdown(
-                    '<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>',
-                    unsafe_allow_html=True,
-                )
             with no_col:
                 if st.button("합주 완전 불가능", use_container_width=True,
                              key=f"bulk_no_{room['id']}"):
@@ -957,10 +956,9 @@ def show_schedule_input(room, user_id, windows):
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
 
     with clear_col:
-        with st.container(key=f"clear-family-{room['id']}", border=True):
-            if st.button("내 일정 전체 지우기", use_container_width=True,
-                         key=f"bulk_clear_{room['id']}", type="secondary"):
-                confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
+        if st.button("내 일정 전체 지우기", type="tertiary", use_container_width=True,
+                     key=f"bulk_clear_{room['id']}"):
+            confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
 
     reset_token_key = f"schedule_reset_{room['id']}"
     if reset_token_key not in st.session_state:
@@ -1262,14 +1260,9 @@ def show_my_rooms(user_id: str):
 
     card_width, card_height = (320, 198) if expanded else (362, 224)
     carousel_key = "room-carousel-expanded" if expanded else "room-carousel"
-    # horizontal=True sets the actual Streamlit layout direction. In collapsed
-    # mode CSS prevents wrapping; in expanded mode cards wrap into a compact grid.
-    with st.container(
-        key=carousel_key,
-        horizontal=True,
-        gap="medium",
-        vertical_alignment="center",
-    ):
+    # Keep a regular Streamlit container. Its direct card children are arranged
+    # horizontally by CSS in collapsed mode and as a compact grid when expanded.
+    with st.container(key=carousel_key):
         for idx, room in enumerate(rooms):
             room_id = str(room["id"])
             is_selected = room_id == current
@@ -1279,7 +1272,9 @@ def show_my_rooms(user_id: str):
                 (member for member in members if str(member.get("user_id")) == str(user_id)),
                 room.get("my_membership", {}),
             )
-            my_session = str(my_member.get("session") or "미지정")
+            my_session = session_display_map(members).get(
+                str(user_id), str(my_member.get("session") or "미지정")
+            )
             safe_room_name = html.escape(str(room.get("room_name") or "이름 없는 합주실"))
             safe_session = html.escape(my_session)
             card_key = f"room-card-selected-{idx}" if is_selected else f"room-card-{idx}"
@@ -1293,27 +1288,23 @@ def show_my_rooms(user_id: str):
                 st.markdown(
                     f'''<div class="room-card-content">
                         <div class="room-card-name">{safe_room_name}</div>
-                        <div class="room-card-meta">
-                            <div class="room-card-meta-item">
-                                <span class="room-card-meta-label">멤버</span>
-                                <strong class="room-card-meta-value">{member_count}명</strong>
+                        <div class="room-card-details">
+                            <div class="room-card-detail">
+                                <span class="room-card-detail-label">멤버</span>
+                                <strong class="room-card-detail-value">{member_count}명</strong>
                             </div>
-                            <div class="room-card-meta-item">
-                                <span class="room-card-meta-label">내 세션</span>
-                                <strong class="room-card-meta-value">{safe_session}</strong>
+                            <div class="room-card-detail">
+                                <span class="room-card-detail-label">내 세션</span>
+                                <strong class="room-card-detail-value">{safe_session}</strong>
                             </div>
                         </div>
                     </div>''',
                     unsafe_allow_html=True,
                 )
-                if is_selected:
-                    st.markdown(
-                        '<div class="room-card-selected-badge">선택됨</div>',
-                        unsafe_allow_html=True,
-                    )
-                elif st.button(
-                    "이동",
-                    type="primary",
+                if st.button(
+                    "선택됨" if is_selected else "이동",
+                    type="primary" if is_selected else "secondary",
+                    disabled=is_selected,
                     use_container_width=False,
                     key=f"room_open_{room_id}",
                 ):
@@ -1531,81 +1522,64 @@ def main():
     }
     .room-card-title { font-size:1.05rem; font-weight:750; line-height:1.35; color:var(--hap-text); }
 
-    /* Bulk setting: one horizontal family, with its heading centered between the two actions. */
-    div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"],
-    div[class*="st-key-clear-family-"] [data-testid="stVerticalBlockBorderWrapper"] {
-      height:112px !important; min-height:112px !important; box-sizing:border-box !important;
+    /* Bulk actions: centered heading above two matching buttons. */
+    div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] {
+      min-height:112px !important; box-sizing:border-box !important;
       display:flex !important; align-items:center !important; justify-content:center !important;
-      border:1px solid var(--hap-border) !important; border-radius:14px !important;
-      padding:10px !important; background:var(--hap-panel-gradient) !important;
-      box-shadow:var(--hap-shadow-raised) !important;
+      padding:12px 14px !important; border-radius:14px !important;
     }
-    div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] > div,
-    div[class*="st-key-clear-family-"] [data-testid="stVerticalBlockBorderWrapper"] > div {
-      width:100% !important; height:100% !important; justify-content:center !important;
-    }
-    div[class*="st-key-bulk-family-"] [data-testid="stHorizontalBlock"] {
-      height:100% !important; align-items:center !important; gap:.55rem !important;
+    div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
+      width:100% !important; justify-content:center !important; gap:10px !important;
     }
     .schedule-tools-heading {
-      width:100%; min-height:3.2rem; display:flex; align-items:center; justify-content:center;
-      box-sizing:border-box; color:var(--hap-text); font-size:clamp(.78rem, 1vw, .98rem);
-      font-weight:750; letter-spacing:-.035em; text-align:center; line-height:1.3;
-      white-space:normal; word-break:keep-all; padding:0 .15rem;
+      width:100%; margin:0; color:var(--hap-text); font-size:.94rem;
+      font-weight:750; letter-spacing:-.03em; text-align:center; line-height:1.25;
+      white-space:normal; word-break:keep-all;
     }
-    div[class*="st-key-bulk-family-"] [data-testid="stBaseButton-secondary"],
-    div[class*="st-key-bulk-family-"] [data-testid="stBaseButton-primary"] {
-      min-height:68px !important; height:68px !important; white-space:normal !important;
-      line-height:1.25 !important; padding:.45rem .35rem !important; font-size:.9rem !important;
+    div[class*="st-key-bulk-family-"] [data-testid="stHorizontalBlock"] {
+      align-items:center !important; gap:.7rem !important;
     }
-    div[class*="st-key-clear-family-"] [data-testid="stBaseButton-secondary"] {
-      width:100% !important; height:88px !important; min-height:88px !important;
-      white-space:normal !important; padding:.8rem !important; font-weight:700;
+    div[class*="st-key-bulk-family-"] [data-testid="stBaseButton-secondary"] {
+      min-height:48px !important; height:48px !important; white-space:normal !important;
+      line-height:1.2 !important; padding:.4rem .55rem !important; font-size:.9rem !important;
+    }
+    div[class*="st-key-bulk_clear_"] [data-testid="stBaseButton-tertiary"] {
+      min-height:48px !important; height:48px !important; white-space:normal !important;
+      padding:.4rem .7rem !important; border:0 !important;
+      border-radius:11px !important; background:var(--hap-button-gradient) !important;
+      box-shadow:var(--hap-shadow-raised) !important; color:var(--hap-button-text) !important;
+      font-weight:700 !important;
     }
 
-    /* Room selector: a true horizontal Streamlit flex container, not a vertical stack. */
-    div.st-key-toggle_room_list_layout {
-      display:flex !important; justify-content:flex-end !important; align-items:center !important;
-    }
+    /* Room selector: regular container with a horizontal scrolling card row. */
     div.st-key-toggle_room_list_layout [data-testid="stBaseButton-secondary"] {
       width:auto !important; min-width:72px !important; min-height:32px !important;
       height:32px !important; padding:.25rem .7rem !important; font-size:.82rem !important;
       border-radius:999px !important;
     }
-
-    div.st-key-room-carousel {
-      display:flex !important; flex-direction:row !important; flex-wrap:nowrap !important;
-      align-items:stretch !important; justify-content:flex-start !important;
+    div.st-key-room-carousel > div[data-testid="stVerticalBlock"] {
+      display:flex !important; flex-flow:row nowrap !important; align-items:stretch !important;
       gap:16px !important; width:100% !important; max-width:100% !important;
       overflow-x:auto !important; overflow-y:hidden !important;
-      padding:8px 4px 18px !important; box-sizing:border-box !important;
+      padding:8px 5px 16px !important; box-sizing:border-box !important;
       scroll-snap-type:x mandatory !important; scrollbar-width:thin !important;
       overscroll-behavior-x:contain !important; touch-action:pan-x pan-y !important;
     }
-    div.st-key-room-carousel > [data-testid="stElementContainer"],
-    div.st-key-room-carousel > div:not([data-testid="stHorizontalBlock"]):not([data-testid="stVerticalBlock"]) {
-      flex:0 0 362px !important; width:362px !important; min-width:362px !important;
-      max-width:362px !important; box-sizing:border-box !important;
-    }
+    div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div,
     div.st-key-room-carousel div[class*="st-key-room-card-"] {
       flex:0 0 362px !important; width:362px !important; min-width:362px !important;
       max-width:362px !important; height:224px !important; min-height:224px !important;
       max-height:224px !important; box-sizing:border-box !important; scroll-snap-align:start;
     }
-
-    div.st-key-room-carousel-expanded {
-      display:flex !important; flex-direction:row !important; flex-wrap:wrap !important;
-      align-items:stretch !important; justify-content:flex-start !important;
-      gap:16px !important; width:100% !important; max-width:100% !important;
-      overflow:visible !important; padding:8px 4px 12px !important; box-sizing:border-box !important;
+    div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
+      display:grid !important; grid-template-columns:repeat(auto-fit, 320px) !important;
+      justify-content:center !important; align-items:stretch !important; gap:16px !important;
+      width:100% !important; max-width:100% !important; padding:8px 4px 12px !important;
+      box-sizing:border-box !important;
     }
-    div.st-key-room-carousel-expanded > [data-testid="stElementContainer"],
-    div.st-key-room-carousel-expanded > div:not([data-testid="stHorizontalBlock"]):not([data-testid="stVerticalBlock"]) {
-      flex:0 0 320px !important; width:320px !important; min-width:320px !important;
-      max-width:320px !important; box-sizing:border-box !important;
-    }
+    div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] > div,
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
-      flex:0 0 320px !important; width:320px !important; min-width:320px !important;
+      flex:none !important; width:320px !important; min-width:320px !important;
       max-width:320px !important; height:198px !important; min-height:198px !important;
       max-height:198px !important; box-sizing:border-box !important;
     }
@@ -1614,20 +1588,15 @@ def main():
       display:flex !important; width:100% !important; min-width:100% !important;
       max-width:100% !important; height:100% !important; min-height:100% !important;
       max-height:100% !important; box-sizing:border-box !important; overflow:hidden !important;
-      border-radius:18px !important;
-      background:linear-gradient(145deg, var(--hap-surface), color-mix(in srgb, var(--hap-surface) 90%, #2563EB)) !important;
-      border:1px solid color-mix(in srgb, #2563EB 22%, var(--hap-border)) !important;
+      border-radius:17px !important;
+      background:var(--hap-panel-gradient) !important;
+      border:1px solid var(--hap-border) !important;
       box-shadow:var(--hap-shadow-raised) !important;
-      transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-    }
-    div[class*="st-key-room-card-selected-"] [data-testid="stVerticalBlockBorderWrapper"] {
-      border:1.5px solid color-mix(in srgb, #2563EB 58%, var(--hap-border)) !important;
-      background:linear-gradient(145deg, color-mix(in srgb, #2563EB 7%, var(--hap-surface)), var(--hap-surface)) !important;
-      box-shadow:0 8px 22px color-mix(in srgb, #2563EB 14%, transparent), var(--hap-shadow-raised) !important;
+      transition:background .16s ease, border-color .16s ease, box-shadow .16s ease;
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
       width:100% !important; height:100% !important; min-height:100% !important;
-      box-sizing:border-box !important; padding:19px 21px 15px !important;
+      box-sizing:border-box !important; padding:20px 22px 15px !important;
       display:flex !important; flex-direction:column !important;
       justify-content:space-between !important; gap:10px !important;
     }
@@ -1641,74 +1610,81 @@ def main():
     }
     div[class*="st-key-room-card-"] .room-card-content {
       display:flex; flex:1 1 auto; flex-direction:column; justify-content:center;
-      gap:19px; height:100%; min-height:0; width:100%; box-sizing:border-box;
+      gap:18px; width:100%; min-height:0; box-sizing:border-box;
     }
     div[class*="st-key-room-card-"] .room-card-name {
-      color:var(--hap-text); font-size:1.34rem; line-height:1.28;
+      color:var(--hap-text); font-size:1.38rem; line-height:1.3;
       font-weight:800; letter-spacing:-.045em; overflow-wrap:anywhere;
       display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
     }
-    div[class*="st-key-room-card-"] .room-card-meta {
-      display:flex; align-items:center; flex-wrap:wrap; gap:9px;
+    div[class*="st-key-room-card-"] .room-card-details {
+      display:flex; align-items:center; flex-wrap:wrap; gap:22px;
     }
-    div[class*="st-key-room-card-"] .room-card-meta-item {
-      display:inline-flex; align-items:center; gap:8px; min-height:35px;
-      box-sizing:border-box; padding:7px 11px; border-radius:10px;
-      background:color-mix(in srgb, #2563EB 6%, var(--hap-surface));
-      border:1px solid color-mix(in srgb, #2563EB 16%, var(--hap-border));
+    div[class*="st-key-room-card-"] .room-card-detail {
+      display:inline-flex; align-items:baseline; gap:7px; white-space:nowrap;
     }
-    div[class*="st-key-room-card-"] .room-card-meta-label {
-      color:var(--hap-muted); font-size:.76rem; font-weight:650; white-space:nowrap;
+    div[class*="st-key-room-card-"] .room-card-detail-label {
+      color:var(--hap-muted); font-size:.82rem; font-weight:600;
     }
-    div[class*="st-key-room-card-"] .room-card-meta-value {
-      color:var(--hap-text); font-size:.84rem; font-weight:800; white-space:nowrap;
+    div[class*="st-key-room-card-"] .room-card-detail-value {
+      color:var(--hap-text); font-size:.96rem; font-weight:800;
     }
+    div[class*="st-key-room-card-"] [data-testid="stBaseButton-secondary"],
     div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
-      width:92px !important; min-width:92px !important; min-height:38px !important;
-      height:38px !important; padding:.4rem .8rem !important; margin-left:auto !important;
-      border-radius:11px !important; font-size:.84rem !important; font-weight:750 !important;
-      box-shadow:0 4px 10px rgba(37,99,235,.18) !important;
+      width:104px !important; min-width:104px !important; min-height:40px !important;
+      height:40px !important; padding:.4rem .8rem !important; margin-left:auto !important;
+      border-radius:10px !important; font-size:.86rem !important; font-weight:750 !important;
     }
-    div[class*="st-key-room-card-"] .room-card-selected-badge {
-      display:flex; align-items:center; justify-content:center; margin-left:auto;
-      width:92px; min-height:38px; box-sizing:border-box; border-radius:11px;
-      color:#2563EB; font-size:.84rem; font-weight:800;
-      background:color-mix(in srgb, #2563EB 11%, var(--hap-surface));
-      border:1px solid color-mix(in srgb, #2563EB 24%, var(--hap-border));
-      box-shadow:var(--hap-shadow-inset);
+    div[class*="st-key-room-card-selected-"] [data-testid="stBaseButton-primary"]:disabled {
+      opacity:1 !important; cursor:default !important;
+      color:#2563EB !important;
+      background:color-mix(in srgb, #2563EB 13%, var(--hap-surface)) !important;
+      border:1px solid color-mix(in srgb, #2563EB 27%, var(--hap-border)) !important;
+      box-shadow:var(--hap-shadow-inset) !important;
     }
 
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
       padding:15px 17px 12px !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-content {
-      gap:14px !important;
+      gap:13px !important;
     }
     div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-name {
-      font-size:1.16rem !important;
+      font-size:1.18rem !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-item {
-      min-height:32px !important; padding:6px 9px !important; gap:6px !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-details {
+      gap:14px !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-label {
-      font-size:.72rem !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-detail-label {
+      font-size:.76rem !important;
     }
-    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-meta-value {
-      font-size:.79rem !important;
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] .room-card-detail-value {
+      font-size:.88rem !important;
+    }
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-secondary"],
+    div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] [data-testid="stBaseButton-primary"] {
+      min-height:36px !important; height:36px !important; width:92px !important; min-width:92px !important;
     }
 
     @media (max-width: 680px) {
+      div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div,
       div.st-key-room-carousel div[class*="st-key-room-card-"] {
         flex:0 0 min(362px, 86vw) !important; width:min(362px, 86vw) !important;
         min-width:min(362px, 86vw) !important; max-width:min(362px, 86vw) !important;
         height:auto !important; aspect-ratio:362 / 224 !important;
         min-height:0 !important; max-height:none !important;
       }
+      div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
+        grid-template-columns:repeat(auto-fit, minmax(min(320px, 88vw), 1fr)) !important;
+      }
+      div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] > div,
       div.st-key-room-carousel-expanded div[class*="st-key-room-card-"] {
-        flex:0 0 min(320px, 88vw) !important; width:min(320px, 88vw) !important;
-        min-width:min(320px, 88vw) !important; max-width:min(320px, 88vw) !important;
-        height:auto !important; aspect-ratio:320 / 198 !important;
+        width:min(320px, 88vw) !important; min-width:0 !important;
+        max-width:100% !important; height:auto !important; aspect-ratio:320 / 198 !important;
         min-height:0 !important; max-height:none !important;
+      }
+      div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
+        padding:16px !important;
       }
     }
     </style>""", unsafe_allow_html=True)
