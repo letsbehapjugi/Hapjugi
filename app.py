@@ -923,38 +923,43 @@ def show_schedule_input(room, user_id, windows):
     elif saved_notice:
         st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
 
-    # 좌우 1:1 구조: 왼쪽은 일괄 설정(버튼-제목-버튼), 오른쪽은 전체 삭제.
+    # 왼쪽: 버튼 - 제목 - 버튼을 한 줄로 배치. 오른쪽: 전체 삭제.
     bulk_col, clear_col = st.columns(2, gap="large", vertical_alignment="center")
     reset_token_key = f"schedule_reset_{room['id']}"
     mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
 
     with bulk_col:
-        with st.container(key=f"bulk-family-{room['id']}"):
-            if st.button("합주 완전 가능", use_container_width=True,
-                         key=f"bulk_yes_{room['id']}"):
-                try:
-                    written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
-                    st.session_state[notice_key] = written
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
-            st.markdown(
-                '<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>',
-                unsafe_allow_html=True,
-            )
-            if st.button("합주 완전 불가능", use_container_width=True,
-                         key=f"bulk_no_{room['id']}"):
-                try:
-                    written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
-                    st.session_state[notice_key] = written
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+        with st.container(key=f"bulk-family-{room['id']}", border=True):
+            yes_col, heading_col, no_col = st.columns([1, 1.15, 1], gap="small", vertical_alignment="center")
+            with yes_col:
+                if st.button("합주 완전 가능", use_container_width=True,
+                             key=f"bulk_yes_{room['id']}"):
+                    try:
+                        written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[0], mine)
+                        st.session_state[notice_key] = written
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
+            with heading_col:
+                st.markdown(
+                    '<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>',
+                    unsafe_allow_html=True,
+                )
+            with no_col:
+                if st.button("합주 완전 불가능", use_container_width=True,
+                             key=f"bulk_no_{room['id']}"):
+                    try:
+                        written = bulk_set(room['id'], user_id, dates, minutes, windows, STATUS_OPTIONS[3], mine)
+                        st.session_state[notice_key] = written
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
 
     with clear_col:
-        if st.button("내 일정 전체 지우기", use_container_width=True,
-                     key=f"bulk_clear_{room['id']}", type="secondary"):
-            confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
+        with st.container(key=f"clear-family-{room['id']}", border=True):
+            if st.button("내 일정 전체 지우기", use_container_width=True,
+                         key=f"bulk_clear_{room['id']}", type="secondary"):
+                confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
 
     reset_token_key = f"schedule_reset_{room['id']}"
     if reset_token_key not in st.session_state:
@@ -1474,32 +1479,52 @@ def main():
     }
     .room-card-title { font-size:1.05rem; font-weight:750; line-height:1.35; color:var(--hap-text); }
 
-    /* Bulk-setting hierarchy: left family has two status actions with its title between;
-       the clear button on the right matches the full family's height. */
-    div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlock"] { gap:.45rem !important; }
-    .schedule-tools-heading {
-      min-height:2.65rem; display:flex; align-items:center; justify-content:center;
-      box-sizing:border-box; color:var(--hap-text); font-size:1rem; font-weight:750;
-      letter-spacing:-.02em; text-align:center; white-space:nowrap;
+    /* Bulk setting: one horizontal family, with its heading centered between the two actions. */
+    div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"],
+    div[class*="st-key-clear-family-"] [data-testid="stVerticalBlockBorderWrapper"] {
+      height:112px !important; min-height:112px !important; box-sizing:border-box !important;
+      display:flex !important; align-items:center !important; justify-content:center !important;
+      border:1px solid var(--hap-border) !important; border-radius:14px !important;
+      padding:10px !important; background:var(--hap-panel-gradient) !important;
+      box-shadow:var(--hap-shadow-raised) !important;
     }
-    div[class*="st-key-bulk_clear_"] [data-testid="stBaseButton-secondary"] {
-      height:137px !important; min-height:137px !important; white-space:normal !important;
-      padding:1rem !important; font-weight:700;
+    div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] > div,
+    div[class*="st-key-clear-family-"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+      width:100% !important; height:100% !important; justify-content:center !important;
+    }
+    div[class*="st-key-bulk-family-"] [data-testid="stHorizontalBlock"] {
+      height:100% !important; align-items:center !important; gap:.55rem !important;
+    }
+    .schedule-tools-heading {
+      width:100%; min-height:3.2rem; display:flex; align-items:center; justify-content:center;
+      box-sizing:border-box; color:var(--hap-text); font-size:clamp(.78rem, 1vw, .98rem);
+      font-weight:750; letter-spacing:-.035em; text-align:center; line-height:1.3;
+      white-space:normal; word-break:keep-all; padding:0 .15rem;
+    }
+    div[class*="st-key-bulk-family-"] [data-testid="stBaseButton-secondary"],
+    div[class*="st-key-bulk-family-"] [data-testid="stBaseButton-primary"] {
+      min-height:68px !important; height:68px !important; white-space:normal !important;
+      line-height:1.25 !important; padding:.45rem .35rem !important; font-size:.9rem !important;
+    }
+    div[class*="st-key-clear-family-"] [data-testid="stBaseButton-secondary"] {
+      width:100% !important; height:88px !important; min-height:88px !important;
+      white-space:normal !important; padding:.8rem !important; font-weight:700;
     }
 
-    /* Fixed portrait cards: width:height = 1:1.618. Horizontal carousel by default. */
+    /* Fixed landscape room cards: width 362px × height 224px (near the golden ratio). */
     div.st-key-room-carousel > div[data-testid="stVerticalBlock"] {
       display:flex !important; flex-flow:row nowrap !important; align-items:stretch !important;
       gap:14px !important; overflow-x:auto !important; overflow-y:hidden !important;
       padding:8px 5px 15px !important; scroll-snap-type:x mandatory; scrollbar-width:thin;
     }
     div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div {
-      flex:0 0 224px !important; width:224px !important; min-width:224px !important;
-      max-width:224px !important; scroll-snap-align:start;
+      flex:0 0 362px !important; width:362px !important; min-width:362px !important;
+      max-width:362px !important; scroll-snap-align:start;
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] {
-      width:100% !important; height:362.4px !important; min-height:362.4px !important;
-      max-height:362.4px !important; aspect-ratio:1 / 1.618 !important; box-sizing:border-box !important;
+      width:362px !important; min-width:362px !important; max-width:362px !important;
+      height:224px !important; min-height:224px !important; max-height:224px !important;
+      aspect-ratio:362 / 224 !important; box-sizing:border-box !important; overflow:hidden !important;
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlockBorderWrapper"] > div {
       height:100% !important; min-height:100% !important;
@@ -1510,20 +1535,20 @@ def main():
     }
     div[class*="st-key-room-card-"] [data-testid="stVerticalBlock"] > div:last-child { margin-top:auto !important; }
     div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
-      display:grid !important; grid-template-columns:repeat(auto-fill, 224px) !important;
+      display:grid !important; grid-template-columns:repeat(auto-fill, 362px) !important;
       align-items:stretch !important; justify-content:center !important; gap:14px !important;
     }
     div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] > div {
-      min-width:0 !important; width:224px !important; max-width:224px !important;
+      min-width:0 !important; width:362px !important; max-width:362px !important;
     }
     @media (max-width: 680px) {
       div.st-key-main_section_radio, div[data-testid="stSegmentedControl"] { width:100% !important; }
       div.st-key-room-carousel > div[data-testid="stVerticalBlock"] > div {
-        flex-basis:224px !important; width:224px !important;
-        min-width:224px !important; max-width:224px !important;
+        flex-basis:362px !important; width:362px !important;
+        min-width:362px !important; max-width:362px !important;
       }
       div.st-key-room-carousel-expanded > div[data-testid="stVerticalBlock"] {
-        grid-template-columns:repeat(auto-fill, minmax(224px, 224px)) !important;
+        grid-template-columns:repeat(auto-fill, minmax(362px, 362px)) !important;
       }
     }
     </style>""", unsafe_allow_html=True)
