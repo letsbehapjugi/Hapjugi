@@ -924,15 +924,20 @@ def show_schedule_input(room, user_id, windows):
     elif saved_notice:
         st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
 
-    # 기존 가로 한 줄 구성으로 복원: 가능 버튼 - 설명 - 불가능 버튼.
+    # 안내 문구를 위쪽 중앙에 두고, 두 일괄 설정 버튼은 그 아래 한 줄로 모은다.
     reset_token_key = f"schedule_reset_{room['id']}"
     mine = {(str(r['date']), str(r['time'])[:5]) for r in rows if r['user_id'] == user_id}
     bulk_col, clear_col = st.columns([2.2, 1], gap="large", vertical_alignment="center")
 
     with bulk_col:
         with st.container(key=f"bulk-family-{room['id']}", border=True):
-            yes_col, heading_col, no_col = st.columns(
-                [1, 1.15, 1], gap="small", vertical_alignment="center"
+            st.markdown(
+                '<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>',
+                unsafe_allow_html=True,
+            )
+            # 양쪽 여백 열을 둬서 버튼 두 개가 패널 중앙에 함께 모이게 한다.
+            _left_space, yes_col, _button_gap, no_col, _right_space = st.columns(
+                [1, 0.6, 0.08, 0.6, 1], gap="small", vertical_alignment="center"
             )
             with yes_col:
                 if st.button(
@@ -948,11 +953,6 @@ def show_schedule_input(room, user_id, windows):
                         st.rerun()
                     except Exception as exc:
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
-            with heading_col:
-                st.markdown(
-                    '<div class="schedule-tools-heading">미선택 시간 일괄 설정</div>',
-                    unsafe_allow_html=True,
-                )
             with no_col:
                 if st.button(
                     "합주 완전 불가능", use_container_width=True,
@@ -968,7 +968,7 @@ def show_schedule_input(room, user_id, windows):
                     except Exception as exc:
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
 
-    # 전체 삭제는 별도 테두리 컨테이너 없이, 한 줄 버튼으로 둔다.
+    # 전체 삭제는 원래의 별도 가로 버튼으로 유지한다.
     with clear_col:
         if st.button(
             "내 일정 전체 지우기", use_container_width=True,
@@ -1529,13 +1529,24 @@ def main():
       font-weight:800; letter-spacing:-.055em; color:var(--hap-heading);
       padding:.28rem 0 .78rem; margin:0 auto;
     }
-    div.st-key-main_section_radio { width:100% !important; max-width:none !important; margin:0 auto 1.35rem !important; }
-    div[data-testid="stSegmentedControl"] { width:100% !important; max-width:none !important; margin:0 auto 1.35rem !important; }
-    div[data-testid="stSegmentedControl"] > div {
-      width:100% !important; border-radius:14px; padding:4px;
+    div.st-key-main_section_radio {
+      display:flex !important; justify-content:center !important; align-items:center !important;
+      width:100% !important; max-width:100% !important; margin:0 auto 1.35rem !important;
+    }
+    div.st-key-main_section_radio [data-testid="stSegmentedControl"] {
+      width:max-content !important; max-width:100% !important; margin:0 auto !important;
+    }
+    div.st-key-main_section_radio [data-testid="stSegmentedControl"] > div,
+    div.st-key-main_section_radio [data-baseweb="button-group"] {
+      display:flex !important; width:max-content !important; max-width:100% !important;
+      justify-content:center !important; margin-left:auto !important; margin-right:auto !important;
+      border-radius:14px; padding:4px;
       background:var(--hap-track) !important; box-shadow:var(--hap-shadow-inset) !important;
     }
-    div[data-testid="stSegmentedControl"] button { flex:1 1 0; justify-content:center; font-weight:650; border-radius:10px !important; }
+    div.st-key-main_section_radio [data-testid="stSegmentedControl"] button {
+      flex:0 0 auto !important; min-width:104px !important;
+      justify-content:center; font-weight:650; border-radius:10px !important;
+    }
 
     /* Global action color is blue; timetable status colors remain semantic. */
     button[kind="primary"], [data-testid="stBaseButton-primary"],
@@ -1546,23 +1557,62 @@ def main():
     [data-testid="stFormSubmitButton"] button:hover {
       background:#1D4ED8 !important; border-color:#1D4ED8 !important;
     }
-    [data-testid="stSegmentedControl"] button[aria-pressed="true"],
-    [data-testid="stSegmentedControl"] button[data-selected="true"],
-    [data-baseweb="button-group"] button[aria-pressed="true"] {
-      background:#2563EB !important; border-color:#2563EB !important; color:#fff !important;
+    /* Force the Streamlit selection accent to blue, including BaseWeb states. */
+    :root, body, .stApp, [data-testid="stApp"],
+    [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+      --primary-color:#2563EB !important;
+      --st-primary-color:#2563EB !important;
+      --color-primary:#2563EB !important;
+      --primary-600:#2563EB !important;
+      --primary-700:#1D4ED8 !important;
+      --color-primary-light:#DBEAFE !important;
+      --color-primary-dark:#1D4ED8 !important;
     }
-    [data-testid="stTabs"] button[role="tab"][aria-selected="true"],
+    [data-testid="stSegmentedControl"] button[aria-pressed="true"],
+    [data-testid="stSegmentedControl"] button[aria-checked="true"],
+    [data-testid="stSegmentedControl"] button[aria-selected="true"],
+    [data-testid="stSegmentedControl"] button[data-selected="true"],
+    [data-testid="stSegmentedControl"] button[data-state="checked"],
+    [data-testid="stBaseButton-segmented_controlActive"],
+    [data-testid="stBaseButton-segmented_controlActive"]:hover,
+    [data-testid="stBaseButton-segmented_controlActive"]:focus-visible,
+    [data-baseweb="button-group"] button[aria-pressed="true"],
+    [data-baseweb="button-group"] button[aria-checked="true"],
+    div.st-key-main_section_radio [aria-pressed="true"],
+    div.st-key-main_section_radio [aria-checked="true"],
+    div.st-key-main_section_radio [aria-selected="true"],
+    div.st-key-main_section_radio [data-selected="true"],
+    div.st-key-main_section_radio [data-state="checked"] {
+      background:#2563EB !important; background-color:#2563EB !important;
+      border-color:#2563EB !important; color:#fff !important;
+    }
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"],
     [data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"],
-    [data-testid="stTabs"] button[aria-selected="true"] {
+    .stTabs [role="tab"][aria-selected="true"],
+    .stTabs [data-baseweb="tab"][aria-selected="true"],
+    button[role="tab"][aria-selected="true"] {
       color:#2563EB !important; border-bottom-color:#2563EB !important;
     }
     [data-testid="stTabs"] [data-baseweb="tab-highlight"],
-    [data-testid="stTabs"] [data-baseweb="tab-border"] {
+    [data-testid="stTabs"] [data-baseweb="tab-border"],
+    .stTabs [data-baseweb="tab-highlight"],
+    .stTabs [data-baseweb="tab-border"],
+    div[data-baseweb="tab-highlight"],
+    div[data-baseweb="tab-border"] {
       background-color:#2563EB !important; border-color:#2563EB !important;
+    }
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"]::after,
+    .stTabs [role="tab"][aria-selected="true"]::after {
+      background:#2563EB !important; border-color:#2563EB !important;
     }
     [data-testid="stCheckbox"] input:checked + div, [data-testid="stRadio"] input:checked + div,
     [data-testid="stCheckbox"] label:has(input:checked) > div,
-    [data-testid="stRadio"] label:has(input:checked) > div { border-color:#2563EB !important; }
+    [data-testid="stRadio"] label:has(input:checked) > div,
+    [data-baseweb="checkbox"] [aria-checked="true"],
+    [data-baseweb="radio"] [aria-checked="true"] {
+      border-color:#2563EB !important; background-color:#2563EB !important;
+      accent-color:#2563EB !important;
+    }
     [data-baseweb="select"]:focus-within, [data-baseweb="input"]:focus-within,
     [data-baseweb="textarea"]:focus-within, [data-testid="stTextInput"] input:focus,
     [data-testid="stDateInput"] input:focus {
@@ -1600,19 +1650,23 @@ def main():
     }
     .room-card-title { font-size:1.05rem; font-weight:750; line-height:1.35; color:var(--hap-text); }
 
-    /* Bulk actions: one horizontal row; the label sits between two wide actions. */
+    /* Bulk actions: centered heading above a compact horizontal pair of buttons. */
     div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] {
-      min-height:88px !important; box-sizing:border-box !important;
+      min-height:116px !important; box-sizing:border-box !important;
       display:flex !important; align-items:center !important; justify-content:center !important;
-      padding:12px 14px !important; border-radius:14px !important;
+      padding:13px 14px 12px !important; border-radius:14px !important;
     }
     div[class*="st-key-bulk-family-"] [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
       width:100% !important; min-height:0 !important; justify-content:center !important;
       align-items:stretch !important; gap:0 !important;
     }
+    div[class*="st-key-bulk-family-"] [data-testid="stHorizontalBlock"] {
+      width:100% !important; align-items:center !important; justify-content:center !important;
+      gap:12px !important;
+    }
     .schedule-tools-heading {
       display:flex; align-items:center; justify-content:center;
-      width:100%; min-height:48px; margin:0 !important; padding:0 7px;
+      width:100%; min-height:28px; margin:0 0 12px !important; padding:0 7px;
       color:var(--hap-text); font-size:.92rem; font-weight:750;
       letter-spacing:-.03em; text-align:center; line-height:1.3;
       white-space:normal; word-break:keep-all;
@@ -1814,12 +1868,11 @@ def main():
     pending_section = st.session_state.pop("pending_main_section", None)
     if pending_section in ["내 합주실", "방 만들기", "방 참여하기"]:
         st.session_state["main_section_radio"] = pending_section
-    nav_left, nav_center, nav_right = st.columns([1, 8, 1], gap="small")
-    with nav_center:
-        section = st.segmented_control(
-            '메뉴', ['내 합주실', '방 만들기', '방 참여하기'],
-            key='main_section_radio', label_visibility='collapsed'
-        )
+    # 세 개 메뉴를 별도 열에 가두지 않고, 위젯 자체를 전체 화면 중앙에 둔다.
+    section = st.segmented_control(
+        '메뉴', ['내 합주실', '방 만들기', '방 참여하기'],
+        key='main_section_radio', label_visibility='collapsed'
+    )
     if section is None:
         section = '내 합주실'
     if section=='내 합주실':
