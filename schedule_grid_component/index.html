@@ -49,13 +49,13 @@ td.preview{background:var(--preview-fill,var(--empty))!important;outline:2px sol
 <div class="wrap" id="wrap"><div id="toolbar" class="toolbar" role="group" aria-label="입력할 상태"></div><table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></div>
 <script>
 'use strict';
-let args=null,themeSignature='',dragging=false,dragPointerId=null,selected=new Set(),dragStatus=null,selectedStatus=null,lastServerSelected=null,builtSignature='',lastResetToken=null,dragStartCell=null,lastDragCellKey=null,tooltipKey=null;
+let args=null,themeSignature='',lastFrameHeight=100,dragging=false,dragPointerId=null,selected=new Set(),dragStatus=null,selectedStatus=null,lastServerSelected=null,builtSignature='',lastResetToken=null,dragStartCell=null,lastDragCellKey=null,tooltipKey=null;
 let pendingEvents=[],inFlightEventId=null,optimisticLayers=new Map();
 const STATUS_LIST=[['합주 완전 가능','fully-available','#00C853'],['합주 가능(애매)','maybe-available','#FFD600'],['합주 가능(불편)','uncomfortable','#FF6D00'],['합주 완전 불가','unavailable','#F44336'],['입력 지우기','clear-status','transparent']];
 const STATUS_CSS_CLASSES=Object.fromEntries(STATUS_LIST.filter(x=>x[1]!=='clear-status').map(x=>[x[0],x[1]]));
 const STATUS_COLORS=Object.fromEntries(STATUS_LIST.filter(x=>x[1]!=='clear-status').map(x=>[x[0],x[2]]));
 function post(type,extra={}){window.parent.postMessage({isStreamlitMessage:true,type,...extra},'*')}
-function setHeight(){requestAnimationFrame(()=>{const w=document.querySelector('#wrap');post('streamlit:setFrameHeight',{height:Math.max(100,Math.ceil(w?w.getBoundingClientRect().height:100)+4)})})}
+function setHeight(){requestAnimationFrame(()=>{const w=document.querySelector('#wrap');const measured=w?Math.ceil(w.getBoundingClientRect().height):0;if(measured>0)lastFrameHeight=Math.max(100,measured+4);post('streamlit:setFrameHeight',{height:lastFrameHeight})})}
 function send(value){post('streamlit:setComponentValue',{value,dataType:'json'})}
 function makeEventId(){return Date.now().toString(36)+'-'+Math.random().toString(36).slice(2)}
 function optimisticStatusFor(key,serverStatus){const layers=optimisticLayers.get(key);return layers&&layers.length?layers[layers.length-1].status:serverStatus}
