@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import html
 import json
 import secrets
@@ -16,6 +17,9 @@ APP_TITLE = "합주기가 됩시다 합(베타)"
 APP_URL = "https://hapjugi.streamlit.app/"
 SCHEDULE_COMPONENT = components.declare_component(
     "schedule_grid", path=str(Path(__file__).parent / "schedule_grid_component")
+)
+GLOBAL_NOTICE_COMPONENT = components.declare_component(
+    "hapjugi_global_notice", path=str(Path(__file__).parent / "notice_component")
 )
 
 STATUS_OPTIONS = [
@@ -75,7 +79,8 @@ def get_supabase() -> Client:
             if expires_at is not None and int(expires_at) <= int(time.time()) + 60:
                 if not refresh_token:
                     raise RuntimeError("Supabase 세션의 Refresh Token이 없습니다.")
-                refreshed = client.auth.refresh_session(refresh_token)
+                with st.spinner("로그인 세션을 갱신하고 있어요"):
+                    refreshed = client.auth.refresh_session(refresh_token)
                 if not getattr(refreshed, "session", None):
                     raise RuntimeError("Supabase 세션 갱신에 실패했습니다.")
             return client
@@ -95,7 +100,8 @@ def get_supabase() -> Client:
         if access_token:
             credentials["access_token"] = access_token
 
-        response = client.auth.sign_in_with_id_token(credentials)
+        with st.spinner("Google 로그인 정보를 연결하고 있어요"):
+            response = client.auth.sign_in_with_id_token(credentials)
         if getattr(response, "session", None):
             return client
 
@@ -109,6 +115,7 @@ def get_supabase() -> Client:
         )
         if st.button("Google 로그인 다시 연결", type="primary", key="supabase_reauth"):
             st.session_state.pop("_hapjugi_supabase_client", None)
+            st.session_state.pop("_hapjugi_current_user_id", None)
             st.logout()
         st.stop()
 
@@ -122,12 +129,208 @@ def require_login() -> None:
         st.stop()
 
 
+CACHE_TTL_ROOMS = 30.0
+CACHE_TTL_MEMBERS = 15.0
+CACHE_TTL_AVAILABILITY = 12.0
+
+
+def _session_cache_get(key: str, ttl: float, force_refresh: bool = False):
+    """Return a per-browser-session cached value when still usable."""
+    if force_refresh:
+        return False, None
+    entry = st.session_state.get(key)
+    if not isinstance(entry, dict) or "data" not in entry:
+        return False, None
+    allow_stale = bool(st.session_state.get("_hapjugi_allow_stale_cache", False))
+    age = time.time() - float(entry.get("saved_at", 0))
+    if allow_stale or age <= ttl:
+        return True, copy.deepcopy(entry["data"])
+    return False, None
+
+
+def _session_cache_set(key: str, value: Any, **metadata) -> None:
+    st.session_state[key] = {
+        "saved_at": time.time(),
+        "data": copy.deepcopy(value),
+        **metadata,
+    }
+
+
+def rerun_local_ui() -> None:
+    """Rerun for a local-only control without refreshing cached server data."""
+    st.session_state["_hapjugi_keep_read_cache_once"] = True
+    st.rerun()
+
+
+def _keep_server_reads_cached() -> None:
+    """Callback for a local control; runs before the app's next rerun starts."""
+    st.session_state["_hapjugi_keep_read_cache_once"] = True
+
+
+def _persist_widget_value(widget_key: str, persisted_key: str) -> None:
+    """Keep a local selection when its tab is lazily unmounted."""
+    st.session_state[persisted_key] = st.session_state.get(widget_key)
+    _keep_server_reads_cached()
+
+
+def _supports_lazy_tabs() -> bool:
+    """st.tabs state tracking and lazy rendering were added after Streamlit 1.50."""
+    try:
+        parts = [int(part.split("+")[0]) for part in st.__version__.split(".")[:2]]
+        return tuple(parts) >= (1, 55)
+    except Exception:
+        return False
+
+
+def _toggle_room_list_layout() -> None:
+    key = "_hapjugi_rooms_expanded"
+    st.session_state[key] = not bool(st.session_state.get(key, False))
+    _keep_server_reads_cached()
+
+
+def _set_session_filter_group(room_id: str, sessions: list[str], selected: bool) -> None:
+    for session_name in sessions:
+        st.session_state[f"session_filter_{room_id}_{session_name}"] = selected
+    _keep_server_reads_cached()
+
+
+def _request_window_delete(prefix: str, index: int) -> None:
+    st.session_state[f"{prefix}_delete"] = index
+    _keep_server_reads_cached()
+
+
+def _add_window(prefix: str) -> None:
+    count_key = "create_window_count" if prefix == "create" else f"{prefix}_count"
+    st.session_state[count_key] = int(st.session_state.get(count_key, 0)) + 1
+    _keep_server_reads_cached()
+
+
+def _delete_host_window(count_key: str) -> None:
+    current_count = int(st.session_state.get(count_key, 0))
+    if current_count > 0:
+        last_index = current_count - 1
+        prefix = "host_" + count_key.removeprefix("host_window_count_")
+        for suffix in ("s", "e", "scope", "dates", "values"):
+            st.session_state.pop(f"{prefix}_{suffix}_{last_index}", None)
+        st.session_state[count_key] = current_count - 1
+    _keep_server_reads_cached()
+
+
+def _increment_count_key(count_key: str) -> None:
+    st.session_state[count_key] = int(st.session_state.get(count_key, 0)) + 1
+    _keep_server_reads_cached()
+
+
+def invalidate_room_caches(user_id: str | None = None, room_id: str | None = None) -> None:
+    """Invalidate room/member reads after a known room or membership mutation."""
+    if user_id:
+        st.session_state.pop(f"_hapjugi_rooms_cache_{user_id}", None)
+    if room_id:
+        st.session_state.pop(f"_hapjugi_members_cache_{room_id}", None)
+    else:
+        for key in list(st.session_state.keys()):
+            if str(key).startswith("_hapjugi_members_cache_"):
+                st.session_state.pop(key, None)
+
+
+def invalidate_availability_cache(room_id: str) -> None:
+    prefixes = (
+        f"_hapjugi_availability_cache_{room_id}_",
+        f"_hapjugi_user_availability_cache_{room_id}_",
+    )
+    for key in list(st.session_state.keys()):
+        if any(str(key).startswith(prefix) for prefix in prefixes):
+            st.session_state.pop(key, None)
+
+
+def _merge_verified_user_rows_into_availability_cache(
+    room_id: str, user_id: str, start: date, end: date,
+    verified_rows: list[dict[str, Any]],
+) -> None:
+    """Keep an existing room-wide read cache coherent after verified own writes."""
+    prefix = f"_hapjugi_availability_cache_{room_id}_"
+    normalized = [
+        {
+            "room_id": room_id,
+            "user_id": user_id,
+            "date": str(row["date"]),
+            "time": str(row["time"])[:5],
+            "status": row["status"],
+        }
+        for row in verified_rows
+        if row.get("status") in STATUS_OPTIONS
+    ]
+    for key in list(st.session_state.keys()):
+        if not str(key).startswith(prefix):
+            continue
+        entry = st.session_state.get(key)
+        if not isinstance(entry, dict) or not isinstance(entry.get("data"), list):
+            continue
+        cached_start = entry.get("start")
+        cached_end = entry.get("end")
+        if not cached_start or not cached_end:
+            continue
+        if str(cached_start) > start.isoformat() or str(cached_end) < end.isoformat():
+            continue
+        remaining = [
+            row for row in entry["data"]
+            if not (
+                str(row.get("user_id")) == str(user_id)
+                and start.isoformat() <= str(row.get("date")) <= end.isoformat()
+            )
+        ]
+        entry["data"] = remaining + copy.deepcopy(normalized)
+        entry["saved_at"] = time.time()
+
+
+def queue_global_toast(message: str) -> None:
+    st.session_state["_hapjugi_global_toast"] = {
+        "message": str(message),
+        "token": secrets.token_hex(8),
+    }
+
+
+def render_global_toast() -> None:
+    payload = st.session_state.get("_hapjugi_global_toast") or {}
+    try:
+        theme = st.context.theme
+        toast_theme = {
+            "backgroundColor": getattr(theme, "secondaryBackgroundColor", "#FFFFFF"),
+            "textColor": getattr(theme, "textColor", "#172033"),
+            "borderColor": getattr(theme, "borderColor", "#DBE2EA"),
+            "primaryColor": getattr(theme, "primaryColor", "#2563EB"),
+        }
+    except Exception:
+        toast_theme = {
+            "backgroundColor": "#FFFFFF", "textColor": "#172033",
+            "borderColor": "#DBE2EA", "primaryColor": "#2563EB",
+        }
+    result = GLOBAL_NOTICE_COMPONENT(
+        message=payload.get("message", ""),
+        token=payload.get("token", ""),
+        theme=toast_theme,
+        duration_ms=5000,
+        key="hapjugi_global_notice_widget",
+        default=None,
+    )
+    if isinstance(result, dict) and result.get("action") == "dismiss":
+        st.session_state["_hapjugi_allow_stale_cache"] = True
+        if str(result.get("token")) == str(payload.get("token")):
+            st.session_state.pop("_hapjugi_global_toast", None)
+
+
 def current_user_id() -> str:
-    # Supabase Auth session is established in get_supabase().
-    response = SUPABASE.auth.get_user()
+    # A user ID is stable for this authenticated browser session. Avoid a
+    # Supabase Auth network round-trip on every ordinary Streamlit rerun.
+    cached = st.session_state.get("_hapjugi_current_user_id")
+    if cached:
+        return str(cached)
+    with st.spinner("로그인 정보를 확인하고 있어요"):
+        response = SUPABASE.auth.get_user()
     if not response.user:
         st.error("로그인 정보를 확인하지 못했습니다. 다시 로그인해 주세요.")
         st.stop()
+    st.session_state["_hapjugi_current_user_id"] = response.user.id
     return response.user.id
 
 
@@ -239,31 +442,39 @@ def make_room_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
-def db_rooms_for_user(user_id: str) -> list[dict[str, Any]]:
-    memberships = (
-        SUPABASE.table("room_members")
-        .select("room_id,name,role")
-        .eq("user_id", user_id)
-        .execute()
-        .data
-        or []
-    )
-    if not memberships:
-        return []
-    room_ids = [m["room_id"] for m in memberships]
-    rooms = (
-        SUPABASE.table("rooms")
-        .select("id,room_code,room_name,host_id,start_date,end_date,unavailable_windows,created_at")
-        .in_("id", room_ids)
-        .order("created_at", desc=True)
-        .execute()
-        .data
-        or []
-    )
-    by_id = {m["room_id"]: m for m in memberships}
-    for room in rooms:
-        room["my_membership"] = by_id.get(room["id"], {})
-    return rooms
+def db_rooms_for_user(user_id: str, force_refresh: bool = False) -> list[dict[str, Any]]:
+    cache_key = f"_hapjugi_rooms_cache_{user_id}"
+    found, cached = _session_cache_get(cache_key, CACHE_TTL_ROOMS, force_refresh)
+    if found:
+        return cached
+
+    with st.spinner("합주실 목록을 불러오고 있어요"):
+        memberships = (
+            SUPABASE.table("room_members")
+            .select("room_id,name,role")
+            .eq("user_id", user_id)
+            .execute()
+            .data
+            or []
+        )
+        if not memberships:
+            rooms = []
+        else:
+            room_ids = [m["room_id"] for m in memberships]
+            rooms = (
+                SUPABASE.table("rooms")
+                .select("id,room_code,room_name,host_id,start_date,end_date,unavailable_windows,created_at")
+                .in_("id", room_ids)
+                .order("created_at", desc=True)
+                .execute()
+                .data
+                or []
+            )
+            by_id = {m["room_id"]: m for m in memberships}
+            for room in rooms:
+                room["my_membership"] = by_id.get(room["id"], {})
+    _session_cache_set(cache_key, rooms)
+    return copy.deepcopy(rooms)
 
 
 def get_room(room_id: str) -> dict[str, Any] | None:
@@ -277,16 +488,82 @@ def get_room(room_id: str) -> dict[str, Any] | None:
     return result.data
 
 
-def get_members(room_id: str) -> list[dict[str, Any]]:
-    return (
-        SUPABASE.table("room_members")
-        .select("id,user_id,name,role,joined_at,session,session_order")
-        .eq("room_id", room_id)
-        .order("joined_at")
-        .execute()
-        .data
-        or []
-    )
+def get_members(room_id: str, force_refresh: bool = False, show_spinner: bool = True) -> list[dict[str, Any]]:
+    cache_key = f"_hapjugi_members_cache_{room_id}"
+    found, cached = _session_cache_get(cache_key, CACHE_TTL_MEMBERS, force_refresh)
+    if found:
+        return cached
+    def _read_members():
+        return (
+            SUPABASE.table("room_members")
+            .select("id,user_id,name,role,joined_at,session,session_order")
+            .eq("room_id", room_id)
+            .order("joined_at")
+            .execute()
+            .data
+            or []
+        )
+    if show_spinner:
+        with st.spinner("멤버 정보를 불러오고 있어요"):
+            members = _read_members()
+    else:
+        members = _read_members()
+    _session_cache_set(cache_key, members)
+    return copy.deepcopy(members)
+
+
+def get_members_for_rooms(
+    room_ids: list[str], force_refresh: bool = False
+) -> dict[str, list[dict[str, Any]]]:
+    """Load uncached room members in one request and keep each room cache separate."""
+    normalized_ids = list(dict.fromkeys(str(room_id) for room_id in room_ids))
+    result: dict[str, list[dict[str, Any]]] = {}
+    missing_ids: list[str] = []
+
+    for room_id in normalized_ids:
+        cache_key = f"_hapjugi_members_cache_{room_id}"
+        found, cached = _session_cache_get(
+            cache_key, CACHE_TTL_MEMBERS, force_refresh
+        )
+        if found:
+            result[room_id] = cached
+        else:
+            missing_ids.append(room_id)
+
+    if missing_ids:
+        def _read_members_for_rooms():
+            query = (
+                SUPABASE.table("room_members")
+                .select("id,room_id,user_id,name,role,joined_at,session,session_order")
+                .in_("room_id", missing_ids)
+                .order("joined_at")
+            )
+            rows: list[dict[str, Any]] = []
+            offset = 0
+            page_size = 500
+            while True:
+                page = query.range(offset, offset + page_size - 1).execute().data or []
+                rows.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += page_size
+            return rows
+
+        with st.spinner("합주실 멤버 정보를 불러오고 있어요"):
+            fetched = _read_members_for_rooms()
+
+        grouped: dict[str, list[dict[str, Any]]] = {
+            room_id: [] for room_id in missing_ids
+        }
+        for member in fetched:
+            room_id = str(member.get("room_id") or "")
+            if room_id in grouped:
+                grouped[room_id].append(member)
+        for room_id, members in grouped.items():
+            _session_cache_set(f"_hapjugi_members_cache_{room_id}", members)
+            result[room_id] = copy.deepcopy(members)
+
+    return result
 
 
 def session_options(members: list[dict[str, Any]] | None = None) -> list[str]:
@@ -298,10 +575,21 @@ def session_options(members: list[dict[str, Any]] | None = None) -> list[str]:
 
 def assign_member_session(room_id: str, user_id: str, session_name: str) -> None:
     session_name = session_name.strip() or "보컬"
-    members = get_members(room_id)
+    members = get_members(room_id, force_refresh=True, show_spinner=False)
     same_session = [m for m in members if str(m.get("session") or "미지정") == session_name and str(m.get("user_id")) != str(user_id)]
     next_order = max([int(m.get("session_order") or 1) for m in same_session] or [0]) + 1
     SUPABASE.table("room_members").update({"session": session_name, "session_order": next_order}).eq("room_id", room_id).eq("user_id", user_id).execute()
+    updated_current_user = False
+    for member in members:
+        if str(member.get("user_id")) == str(user_id):
+            member["session"] = session_name
+            member["session_order"] = next_order
+            updated_current_user = True
+    member_cache_key = f"_hapjugi_members_cache_{room_id}"
+    if updated_current_user:
+        _session_cache_set(member_cache_key, members)
+    else:
+        st.session_state.pop(member_cache_key, None)
 
 
 def session_display_map(members: list[dict[str, Any]]) -> dict[str, str]:
@@ -341,7 +629,7 @@ def reorder_session_members(room_id: str, members: list[dict[str, Any]], target_
     old_ordered = sorted(old_group, key=lambda m: (int(m.get("session_order") or 1), str(m.get("joined_at") or "")))
     for index, member in enumerate(old_ordered, 1):
         SUPABASE.table("room_members").update({"session_order": index}).eq("room_id", room_id).eq("user_id", member["user_id"]).execute()
-    refreshed = get_members(room_id)
+    refreshed = get_members(room_id, force_refresh=True, show_spinner=False)
     destination = [m for m in refreshed if str(m.get("session") or "미지정") == new_session and str(m.get("user_id")) != str(target_user_id)]
     destination.sort(key=lambda m: (int(m.get("session_order") or 1), str(m.get("joined_at") or "")))
     destination.insert(max(0, min(int(new_order) - 1, len(destination))), target)
@@ -354,9 +642,9 @@ def session_picker(prefix: str, members: list[dict[str, Any]] | None = None, def
     current_options = options[:-1]
     if default not in current_options:
         default = current_options[0]
-    choice = st.selectbox("세션", options, index=options.index(default), key=f"{prefix}_session_choice")
+    choice = st.selectbox("세션", options, index=options.index(default), key=f"{prefix}_session_choice", on_change=_keep_server_reads_cached)
     if choice == ADD_SESSION_OPTION:
-        custom = st.text_input("추가할 세션 이름", max_chars=30, placeholder="예: 통기타, 바이올린", key=f"{prefix}_session_custom").strip()
+        custom = st.text_input("추가할 세션 이름", max_chars=30, placeholder="예: 통기타, 바이올린", key=f"{prefix}_session_custom", on_change=_keep_server_reads_cached).strip()
         return custom
     return choice
 
@@ -374,10 +662,17 @@ def _paged_availability_query(query, page_size: int = 500) -> list[dict[str, Any
     return rows
 
 
-def get_availability(room_id: str, dates: list[date]) -> list[dict[str, Any]]:
+def get_availability(
+    room_id: str, dates: list[date], force_refresh: bool = False
+) -> list[dict[str, Any]]:
     if not dates:
         return []
     start, end = dates[0].isoformat(), dates[-1].isoformat()
+    cache_key = f"_hapjugi_availability_cache_{room_id}_{start}_{end}"
+    found, cached = _session_cache_get(cache_key, CACHE_TTL_AVAILABILITY, force_refresh)
+    if found:
+        return cached
+
     query = (
         SUPABASE.table("availability")
         .select("id,user_id,date,time,status")
@@ -388,7 +683,10 @@ def get_availability(room_id: str, dates: list[date]) -> list[dict[str, Any]]:
         .order("time")
         .order("user_id")
     )
-    return _paged_availability_query(query)
+    with st.spinner("합주실 일정을 불러오고 있어요"):
+        rows = _paged_availability_query(query)
+    _session_cache_set(cache_key, rows, start=start, end=end)
+    return copy.deepcopy(rows)
 
 
 def get_user_availability(room_id: str, user_id: str, start: date, end: date) -> list[dict[str, Any]]:
@@ -404,6 +702,19 @@ def get_user_availability(room_id: str, user_id: str, start: date, end: date) ->
         .order("time")
     )
     return _paged_availability_query(query)
+
+
+def get_user_availability_cached(
+    room_id: str, user_id: str, start: date, end: date
+) -> list[dict[str, Any]]:
+    key = f"_hapjugi_user_availability_cache_{room_id}_{user_id}_{start.isoformat()}_{end.isoformat()}"
+    found, cached = _session_cache_get(key, CACHE_TTL_AVAILABILITY)
+    if found:
+        return cached
+    with st.spinner("복사할 일정을 불러오고 있어요"):
+        rows = get_user_availability(room_id, user_id, start, end)
+    _session_cache_set(key, rows)
+    return copy.deepcopy(rows)
 
 
 def save_availability_rows_verified(
@@ -461,6 +772,9 @@ def save_availability_rows_verified(
         stored_rows = get_user_availability(room_id, user_id, first_date, last_date)
         stored = {(str(row["date"]), str(row["time"])[:5]): row["status"] for row in stored_rows}
         missing = [key for key, row in unique.items() if stored.get(key) != row["status"]]
+    _merge_verified_user_rows_into_availability_cache(
+        room_id, user_id, first_date, last_date, stored_rows
+    )
     return len(unique) - len(missing), missing
 
 
@@ -500,6 +814,11 @@ def delete_availability_slots_verified(
         still_present = {
             (str(row["date"]), str(row["time"])[:5]) for row in stored_rows
         } & targets
+    else:
+        stored_rows = get_user_availability(room_id, user_id, first_date, last_date)
+    _merge_verified_user_rows_into_availability_cache(
+        room_id, user_id, first_date, last_date, stored_rows
+    )
     return sorted(still_present)
 
 
@@ -579,17 +898,26 @@ def create_room(room_name: str, display_name: str, password: str, start: date, e
         raise RuntimeError("방 생성에 실패했습니다.")
     SUPABASE.table("rooms").update({"unavailable_windows": windows}).eq("id", room_id).execute()
     assign_member_session(str(room_id), current_user_id(), session_name)
+    st.session_state.pop(f"_hapjugi_rooms_cache_{current_user_id()}", None)
     room = get_room(str(room_id))
     if not room:
         raise RuntimeError("방 생성 후 방 정보를 불러오지 못했습니다.")
     return room
 
 
-def lookup_room_by_code(code: str) -> dict[str, Any] | None:
-    result = SUPABASE.rpc("lookup_room", {"p_room_code": code}).execute()
-    if not result.data:
-        return None
-    return result.data[0] if isinstance(result.data, list) else result.data
+def lookup_room_by_code(code: str, force_refresh: bool = False, show_spinner: bool = True) -> dict[str, Any] | None:
+    cache_key = f"_hapjugi_room_code_cache_{code}"
+    found, cached = _session_cache_get(cache_key, 300.0, force_refresh)
+    if found:
+        return cached
+    if show_spinner:
+        with st.spinner("초대 코드를 확인하고 있어요"):
+            result = SUPABASE.rpc("lookup_room", {"p_room_code": code}).execute()
+    else:
+        result = SUPABASE.rpc("lookup_room", {"p_room_code": code}).execute()
+    room = (result.data[0] if isinstance(result.data, list) else result.data) if result.data else None
+    _session_cache_set(cache_key, room)
+    return copy.deepcopy(room)
 
 
 def join_room(code: str, password: str, display_name: str, session_name: str = "보컬") -> dict[str, Any]:
@@ -602,6 +930,7 @@ def join_room(code: str, password: str, display_name: str, session_name: str = "
     if not room_id:
         raise RuntimeError("방 참여에 실패했습니다.")
     assign_member_session(str(room_id), current_user_id(), session_name)
+    st.session_state.pop(f"_hapjugi_rooms_cache_{current_user_id()}", None)
     room = get_room(str(room_id))
     if not room:
         raise RuntimeError("방 참여 후 방 정보를 불러오지 못했습니다.")
@@ -766,49 +1095,13 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
         st.rerun()
         return
 
-    # The custom component keeps accepting strokes while this synchronous
-    # server request is running. Its browser-side queue sends them to Python in
-    # order, one event at a time.
-    save_indicator = st.empty()
-    save_indicator.markdown(
-        '''
-        <style>
-        @keyframes hapjugi-save-spin { to { transform: rotate(360deg); } }
-        .hapjugi-save-toast {
-            position:fixed !important; left:50vw !important; bottom:20px !important;
-            top:auto !important; right:auto !important; transform:translateX(-50%) !important;
-            z-index:2147483647 !important; display:flex !important; align-items:center !important;
-            justify-content:center !important; gap:10px !important;
-            width:max-content !important; max-width:calc(100vw - 28px) !important;
-            box-sizing:border-box !important; padding:11px 17px !important;
-            border:1px solid var(--hap-border, #64748b) !important;
-            border-radius:999px !important; background:var(--hap-surface, #fff) !important;
-            color:var(--hap-text, #1f2937) !important;
-            box-shadow:0 5px 22px rgba(0,0,0,.22) !important;
-            font-size:14px !important; font-weight:700 !important; line-height:1.25 !important;
-            white-space:nowrap !important; pointer-events:none !important;
-        }
-        .hapjugi-save-toast .spinner {
-            width:17px; height:17px; flex:0 0 17px; border-radius:50%;
-            border:2px solid color-mix(in srgb, var(--hap-text, #1f2937) 22%, transparent);
-            border-top-color:#2563EB; animation:hapjugi-save-spin .72s linear infinite;
-        }
-        </style>
-        <div class="hapjugi-save-toast" role="status" aria-live="polite">
-            <span class="spinner" aria-hidden="true"></span>
-            <span>서버에 일정을 저장하고 있어요</span>
-        </div>
-        ''',
-        unsafe_allow_html=True,
-    )
-
     # Persist each operation independently. If only part of a drag fails, the
     # next run reloads the actual database state: committed cells remain and
     # uncommitted cells naturally revert to their prior server values.
     failed_cells: set[tuple[str, str]] = set()
     failure_details: list[str] = []
 
-    try:
+    with st.spinner("서버에 일정을 저장하고 있어요"):
         if rows_to_upsert:
             try:
                 _, missing = save_availability_rows_verified(
@@ -834,8 +1127,6 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
                     for slot in times
                 )
                 failure_details.append(f"일정 삭제 오류: {exc}")
-    finally:
-        save_indicator.empty()
 
     # The next run reads the latest committed rows before sending this ack.
     # The iframe then removes its optimistic layer and paints only DB state.
@@ -861,10 +1152,10 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
             message = f"저장 결과를 확인하지 못했어요. 서버 상태를 다시 불러왔어요. ({detail})"
         st.session_state[f"_schedule_save_error_{room['id']}"] = message
     elif changed_count:
-        st.session_state[f"_schedule_saved_notice_{room['id']}"] = {
-            "count": changed_count,
-            "action": "delete" if status == CLEAR_STATUS else "save",
-        }
+        if status == CLEAR_STATUS:
+            queue_global_toast(f"{changed_count:,}칸의 일정이 서버에서 삭제되었어요.")
+        else:
+            queue_global_toast(f"{changed_count:,}칸의 일정이 서버에 저장되었어요.")
 
     st.rerun()
 
@@ -874,35 +1165,37 @@ def _window_editor(prefix: str, room_start: date, room_end: date, windows: list[
     count = st.session_state["create_window_count"]
     dates = [room_start + timedelta(days=i) for i in range((room_end-room_start).days + 1)]
     st.markdown("**합주 제외 시간대 설정**")
-    enabled = st.checkbox("합주 제외 시간대 설정", value=bool(windows) or count > 0, key=f"{prefix}_enabled")
+    enabled = st.checkbox("합주 제외 시간대 설정", value=bool(windows) or count > 0, key=f"{prefix}_enabled", on_change=_keep_server_reads_cached)
     if not enabled:
         return []
     if count == 0:
         count = 1
         st.session_state["create_window_count"] = 1
-        st.rerun()
+        rerun_local_ui()
     for i in range(count):
         old = windows[i] if i < len(windows) else {"start":"00:00","end":"06:00","scope":"all","dates":[]}
         with st.container(border=True):
             h1,h2 = st.columns([5,1])
             h1.markdown(f"**합주 제외 시간대 {i+1}**")
-            if h2.button("삭제", key=f"{prefix}_del_{i}"):
-                st.session_state[f"{prefix}_delete"] = i
-                st.rerun()
+            h2.button(
+                "삭제", key=f"{prefix}_del_{i}",
+                on_click=_request_window_delete, args=(prefix, i),
+            )
             a,b = st.columns(2)
             options=time_choices(); end_options=time_choices(True)
-            s=a.selectbox("시작", options, index=options.index(old.get("start","00:00")), key=f"{prefix}_s_{i}")
-            e=b.selectbox("종료", end_options, index=end_options.index(old.get("end","06:00")), key=f"{prefix}_e_{i}")
+            s=a.selectbox("시작", options, index=options.index(old.get("start","00:00")), key=f"{prefix}_s_{i}", on_change=_keep_server_reads_cached)
+            e=b.selectbox("종료", end_options, index=end_options.index(old.get("end","06:00")), key=f"{prefix}_e_{i}", on_change=_keep_server_reads_cached)
             scope_map={"all":"전체","weekdays":"주중","weekends":"주말","dates":"날짜 선택"}
             scopes=list(scope_map)
-            scope=st.radio("적용 날짜", scopes, index=scopes.index(old.get("scope","all")), format_func=lambda x:scope_map[x], horizontal=True, key=f"{prefix}_scope_{i}")
+            scope=st.radio("적용 날짜", scopes, index=scopes.index(old.get("scope","all")), format_func=lambda x:scope_map[x], horizontal=True, key=f"{prefix}_scope_{i}", on_change=_keep_server_reads_cached)
             chosen=[]
             if scope=="dates":
-                chosen=st.multiselect("날짜", dates, default=[date.fromisoformat(x) for x in old.get("dates",[]) if x in {d.isoformat() for d in dates}], format_func=lambda d:f"{d:%m/%d} ({'월화수목금토일'[d.weekday()]})", key=f"{prefix}_dates_{i}")
+                chosen=st.multiselect("날짜", dates, default=[date.fromisoformat(x) for x in old.get("dates",[]) if x in {d.isoformat() for d in dates}], format_func=lambda d:f"{d:%m/%d} ({'월화수목금토일'[d.weekday()]})", key=f"{prefix}_dates_{i}", on_change=_keep_server_reads_cached)
             st.session_state[f"{prefix}_values_{i}"]={"start":s,"end":e,"scope":scope,"dates":[d.isoformat() for d in chosen]}
-    if st.button("+", key=f"{prefix}_add", use_container_width=True):
-        st.session_state["create_window_count" if prefix=="create" else f"{prefix}_count"] = count+1
-        st.rerun()
+    st.button(
+        "+", key=f"{prefix}_add", use_container_width=True,
+        on_click=_add_window, args=(prefix,),
+    )
     return [st.session_state.get(f"{prefix}_values_{i}", {}) for i in range(count)]
 
 
@@ -916,7 +1209,7 @@ def _normalize_window_editor(prefix: str, count: int) -> None:
             if old in st.session_state:
                 st.session_state[new]=st.session_state[old]
     st.session_state["create_window_count" if prefix=="create" else f"{prefix}_count"]=max(0,count-1)
-    st.rerun()
+    rerun_local_ui()
 
 
 def show_room_creation(user_id: str):
@@ -924,13 +1217,13 @@ def show_room_creation(user_id: str):
         st.subheader("새 합주 방 만들기")
         if "create_window_count" not in st.session_state:
             st.session_state["create_window_count"] = 0
-        room_name = st.text_input("방 이름", placeholder="예: 경희대학교 한국어학과 밴드 동아리 ‘가락’ 합주", key="create_room_name")
-        host_name = st.text_input("내 이름", value=current_user_name(), key="create_host_name")
+        room_name = st.text_input("방 이름", placeholder="예: 경희대학교 한국어학과 밴드 동아리 ‘가락’ 합주", key="create_room_name", on_change=_keep_server_reads_cached)
+        host_name = st.text_input("내 이름", value=current_user_name(), key="create_host_name", on_change=_keep_server_reads_cached)
         host_session = session_picker("create_host", [], "보컬")
-        password = st.text_input("방 비밀번호 (선택)", type="password", help="비워 두면 비밀번호 없이 방 코드만으로 참여할 수 있습니다.", key="create_password")
+        password = st.text_input("방 비밀번호 (선택)", type="password", help="비워 두면 비밀번호 없이 방 코드만으로 참여할 수 있습니다.", key="create_password", on_change=_keep_server_reads_cached)
         c1,c2=st.columns(2)
-        start=c1.date_input("합주 시작일", date.today(), key="create_start")
-        end=c2.date_input("합주 종료일", date.today()+timedelta(days=13), key="create_end")
+        start=c1.date_input("합주 시작일", date.today(), key="create_start", on_change=_keep_server_reads_cached)
+        end=c2.date_input("합주 종료일", date.today()+timedelta(days=13), key="create_end", on_change=_keep_server_reads_cached)
         if end < start:
             st.error("종료일은 시작일보다 빠를 수 없습니다.")
             return
@@ -949,21 +1242,23 @@ def show_room_creation(user_id: str):
                 if w["scope"]=="dates" and not w["dates"]: st.error("날짜 선택을 사용한 시간대에는 최소 한 날짜를 골라 주세요."); return
                 valid.append(w)
             try:
-                created=create_room(room_name,host_name,password.strip(),start,end,valid,host_session)
+                with st.spinner("새 합주실을 만들고 있어요"):
+                    created=create_room(room_name,host_name,password.strip(),start,end,valid,host_session)
                 st.session_state["active_room_id"]=created["id"]
+                st.session_state["_force_active_room_availability_refresh"] = str(created["id"])
                 st.session_state["pending_main_section"]="내 합주실"
-                st.success(f"방을 만들었습니다. 방 코드: **{created['room_code']}**")
+                queue_global_toast(f"합주실을 만들었어요. 방 코드: {created['room_code']}")
                 st.rerun()
             except Exception as exc:
                 st.error(f"방을 만들지 못했습니다: {exc}")
 
 
-def show_join_room():
+def show_join_room(user_id: str):
     with st.container(key="room-join-form"):
         st.subheader("초대 코드로 방 참여하기")
-        code = st.text_input("6자리 방 코드", max_chars=6, placeholder="예: 123456", key="join_room_code")
-        password = st.text_input("방 비밀번호", type="password", help="방장이 비밀번호를 설정하지 않았다면 비워 두세요.", key="join_room_password")
-        name = st.text_input("내 이름", value=current_user_name(), key="join_room_name")
+        code = st.text_input("6자리 방 코드", max_chars=6, placeholder="예: 123456", key="join_room_code", on_change=_keep_server_reads_cached)
+        password = st.text_input("방 비밀번호", type="password", help="방장이 비밀번호를 설정하지 않았다면 비워 두세요.", key="join_room_password", on_change=_keep_server_reads_cached)
+        name = st.text_input("내 이름", value=current_user_name(), key="join_room_name", on_change=_keep_server_reads_cached)
         found_room = lookup_room_by_code(code.strip()) if len(code.strip()) == 6 and code.strip().isdigit() else None
         existing_members = get_members(str(found_room["id"])) if found_room else []
         session_name = session_picker(f"join_{found_room['id']}" if found_room else "join", existing_members, "보컬")
@@ -981,14 +1276,16 @@ def show_join_room():
                 st.error("세션을 선택하거나 새 세션 이름을 입력해 주세요.")
                 return
             try:
-                room = lookup_room_by_code(code)
-                if not room:
-                    st.error("해당 코드의 방을 찾을 수 없습니다.")
-                    return
-                joined = join_room(code, password.strip(), name, session_name)
+                with st.spinner("합주실에 참여하고 있어요"):
+                    room = lookup_room_by_code(code, force_refresh=True, show_spinner=False)
+                    if not room:
+                        st.error("해당 코드의 방을 찾을 수 없습니다.")
+                        return
+                    joined = join_room(code, password.strip(), name, session_name)
                 st.session_state["active_room_id"] = joined["id"]
+                st.session_state["_force_active_room_availability_refresh"] = str(joined["id"])
                 st.session_state["pending_main_section"] = "내 합주실"
-                st.success(f"'{room['room_name']}' 방에 참여했습니다.")
+                queue_global_toast(f"'{room['room_name']}' 방에 참여했어요.")
                 st.rerun()
             except Exception as exc:
                 st.error(f"방 코드 또는 비밀번호가 맞지 않거나 세션 정보를 저장하지 못했습니다: {exc}")
@@ -998,41 +1295,46 @@ def show_join_room():
 def confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key):
     st.write("정말 지우시겠어요?")
     cancel_col, confirm_col = st.columns(2)
-    if cancel_col.button("취소", use_container_width=True, key=f"cancel_schedule_clear_{room['id']}"):
-        st.rerun()
-    if confirm_col.button("지우기", type="primary", use_container_width=True,
-                          key=f"confirm_schedule_clear_{room['id']}"):
+    if cancel_col.button(
+        "취소", use_container_width=True, key=f"cancel_schedule_clear_{room['id']}",
+        on_click=_keep_server_reads_cached,
+    ):
+        rerun_local_ui()
+    if confirm_col.button(
+        "지우기", type="primary", use_container_width=True,
+        key=f"confirm_schedule_clear_{room['id']}",
+        on_click=_keep_server_reads_cached,
+    ):
         try:
-            SUPABASE.table("availability").delete().eq("room_id", room["id"]).eq("user_id", user_id).execute()
-            remaining = get_user_availability(room["id"], user_id, dates[0], dates[-1]) if dates else []
-            if remaining:
-                raise RuntimeError(f"아직 {len(remaining)}칸이 남아 있습니다.")
+            with st.spinner("일정을 서버에서 삭제하고 있어요"):
+                SUPABASE.table("availability").delete().eq("room_id", room["id"]).eq("user_id", user_id).execute()
+                remaining = get_user_availability(room["id"], user_id, dates[0], dates[-1]) if dates else []
+                if remaining:
+                    raise RuntimeError(f"아직 {len(remaining)}칸이 남아 있습니다.")
+            if dates:
+                _merge_verified_user_rows_into_availability_cache(
+                    str(room["id"]), str(user_id), dates[0], dates[-1], []
+                )
+            user_cache_prefix = f"_hapjugi_user_availability_cache_{room['id']}_{user_id}_"
+            for cache_key in list(st.session_state.keys()):
+                if str(cache_key).startswith(user_cache_prefix):
+                    st.session_state.pop(cache_key, None)
             st.session_state[reset_token_key] = st.session_state.get(reset_token_key, 0) + 1
-            st.session_state[notice_key] = 0
+            queue_global_toast("내 일정이 모두 삭제되었어요.")
             st.rerun()
         except Exception as exc:
             st.error(f"일정을 전체 삭제하지 못했습니다: {exc}")
 
 
-def show_schedule_input(room, user_id, windows):
+def show_schedule_input(room, user_id, windows, availability_rows=None):
     st.subheader("내 일정 입력")
     dates = all_room_dates(room)
     minutes = visible_minutes(windows)
     selected_status = st.session_state.get(f"paint_status_{room['id']}", STATUS_OPTIONS[0])
-    rows = get_availability(room["id"], dates)
+    rows = availability_rows if availability_rows is not None else get_availability(room["id"], dates)
     statuses = {(str(r["date"]), str(r["time"])[:5]): r["status"] for r in rows if r["user_id"] == user_id}
 
     notice_key = f"_schedule_saved_notice_{room['id']}"
-    saved_notice = st.session_state.pop(notice_key, None)
-    if isinstance(saved_notice, dict):
-        notice_count = int(saved_notice.get("count", 0))
-        if notice_count and saved_notice.get("action") == "delete":
-            st.success(f"{notice_count:,}칸의 일정이 서버에서 삭제되었어요.")
-        elif notice_count:
-            st.success(f"{notice_count:,}칸의 일정이 서버에 저장되었어요.")
-    elif saved_notice:
-        st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
-
     save_error = st.session_state.pop(f"_schedule_save_error_{room['id']}", None)
     if save_error:
         st.error(save_error)
@@ -1058,11 +1360,12 @@ def show_schedule_input(room, user_id, windows):
                     key=f"bulk_yes_{room['id']}"
                 ):
                     try:
-                        written = bulk_set(
-                            room['id'], user_id, dates, minutes, windows,
-                            STATUS_OPTIONS[0], mine
-                        )
-                        st.session_state[notice_key] = written
+                        with st.spinner("일정을 서버에 저장하고 있어요"):
+                            written = bulk_set(
+                                room['id'], user_id, dates, minutes, windows,
+                                STATUS_OPTIONS[0], mine
+                            )
+                        queue_global_toast(f"{written:,}칸의 일정이 서버에 저장되었어요.")
                         st.rerun()
                     except Exception as exc:
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
@@ -1072,11 +1375,12 @@ def show_schedule_input(room, user_id, windows):
                     key=f"bulk_no_{room['id']}"
                 ):
                     try:
-                        written = bulk_set(
-                            room['id'], user_id, dates, minutes, windows,
-                            STATUS_OPTIONS[3], mine
-                        )
-                        st.session_state[notice_key] = written
+                        with st.spinner("일정을 서버에 저장하고 있어요"):
+                            written = bulk_set(
+                                room['id'], user_id, dates, minutes, windows,
+                                STATUS_OPTIONS[3], mine
+                            )
+                        queue_global_toast(f"{written:,}칸의 일정이 서버에 저장되었어요.")
                         st.rerun()
                     except Exception as exc:
                         st.error(f"일괄 설정을 저장하지 못했습니다: {exc}")
@@ -1085,7 +1389,8 @@ def show_schedule_input(room, user_id, windows):
     with clear_col:
         if st.button(
             "내 일정 전체 지우기", use_container_width=True,
-            key=f"bulk_clear_{room['id']}", type="secondary"
+            key=f"bulk_clear_{room['id']}", type="secondary",
+            on_click=_keep_server_reads_cached,
         ):
             confirm_clear_schedule(room, user_id, dates, notice_key, reset_token_key)
 
@@ -1094,12 +1399,12 @@ def show_schedule_input(room, user_id, windows):
     render_schedule_component(room, user_id, dates, minutes, windows, statuses, selected_status,
                               editable=True, key=f"editable_{room['id']}",
                               reset_token=st.session_state[reset_token_key])
-    if st.button("이 일정 복사하기", key=f"copy_schedule_open_{room['id']}", type="secondary"):
-        show_copy_schedule_dialog(room, user_id)
+    if st.button("이 일정 복사하기", key=f"copy_schedule_open_{room['id']}", type="secondary", on_click=_keep_server_reads_cached):
+        show_copy_schedule_dialog(room, user_id, rows)
 
 
 @st.dialog("이 일정 복사하기", width="small")
-def show_copy_schedule_dialog(source_room: dict[str, Any], user_id: str) -> None:
+def show_copy_schedule_dialog(source_room: dict[str, Any], user_id: str, source_availability_rows=None) -> None:
     rooms = [room for room in db_rooms_for_user(user_id) if str(room["id"]) != str(source_room["id"])]
     if not rooms:
         st.info("일정을 복사할 다른 합주 방이 없습니다. 다른 방에 먼저 참여해 주세요.")
@@ -1107,13 +1412,13 @@ def show_copy_schedule_dialog(source_room: dict[str, Any], user_id: str) -> None
 
     source_dates = all_room_dates(source_room)
     source_date_set = {d.isoformat() for d in source_dates}
-    st.caption("두 방의 날짜가 겹치는 날만 복사합니다. 같은 날짜와 시간대의 일정만 옮기며, 대상 방에 이미 입력된 값은 원본 일정으로 덮어씁니다. 원본에서 미입력인 칸은 대상 방에서 지우지 않습니다.")
+    st.caption("두 방의 날짜가 겹치는 날만 붙여넣습니다. 같은 날짜와 시간대의 일정이 대상 방에 입력되며, 대상 방에 이미 입력된 값은 원본 일정으로 덮어씁니다. 원본에서 미입력인 칸은 대상 방에서 지우지 않습니다.")
     room_ids = [str(room["id"]) for room in rooms]
     room_map = {str(room["id"]): room for room in rooms}
     target_id = st.selectbox(
         "복사할 합주 방", room_ids,
         format_func=lambda rid: f"{room_map[rid]['room_name']} · {room_map[rid]['start_date']}~{room_map[rid]['end_date']}",
-        key=f"copy_target_room_{source_room['id']}"
+        key=f"copy_target_room_{source_room['id']}" , on_change=_keep_server_reads_cached
     )
     target_room = room_map[target_id]
     target_dates = all_room_dates(target_room)
@@ -1123,12 +1428,19 @@ def show_copy_schedule_dialog(source_room: dict[str, Any], user_id: str) -> None
         return
 
     st.write(f"**복사 범위:** {overlap[0]} ~ {overlap[-1]} ({len(overlap)}일)")
-    source_rows = get_user_availability(
-        str(source_room["id"]), user_id,
-        date.fromisoformat(overlap[0]), date.fromisoformat(overlap[-1])
-    )
-    source_map = {(str(row["date"]), str(row["time"])[:5]): row["status"] for row in source_rows
-                  if str(row["date"]) in set(overlap) and row.get("status") in STATUS_OPTIONS}
+    source_rows = source_availability_rows
+    if source_rows is None:
+        source_rows = get_user_availability_cached(
+            str(source_room["id"]), user_id,
+            date.fromisoformat(overlap[0]), date.fromisoformat(overlap[-1])
+        )
+    source_map = {
+        (str(row["date"]), str(row["time"])[:5]): row["status"]
+        for row in source_rows
+        if str(row.get("user_id", user_id)) == str(user_id)
+        and str(row["date"]) in set(overlap)
+        and row.get("status") in STATUS_OPTIONS
+    }
     source_windows = get_windows(source_room)
     target_windows = get_windows(target_room)
     to_copy = []
@@ -1149,16 +1461,21 @@ def show_copy_schedule_dialog(source_room: dict[str, Any], user_id: str) -> None
         st.caption(f"원본 방에서 합주 제외된 {skipped_source_blocked:,}칸은 복사하지 않습니다.")
     if skipped_target_blocked:
         st.caption(f"대상 방의 합주 제외 시간대와 겹치는 {skipped_target_blocked:,}칸은 건너뜁니다.")
-    if st.button("겹치는 날짜의 일정 복사", type="primary", use_container_width=True,
-                 disabled=not to_copy, key=f"copy_schedule_submit_{source_room['id']}"):
+    if st.button(
+        "해당하는 날짜의 일정 붙여넣기", type="primary", use_container_width=True,
+        disabled=not to_copy, key=f"copy_schedule_submit_{source_room['id']}",
+        on_click=_keep_server_reads_cached,
+    ):
         try:
-            saved_count, missing = save_availability_rows_verified(str(target_room["id"]), user_id, to_copy)
+            with st.spinner("일정을 대상 합주실에 붙여넣고 있어요"):
+                saved_count, missing = save_availability_rows_verified(str(target_room["id"]), user_id, to_copy)
             if missing:
                 preview = ", ".join(f"{d} {t}" for d, t in missing[:8])
-                st.error(f"일부 일정 {len(missing)}칸을 복사하지 못했습니다: {preview}")
+                st.error(f"일부 일정 {len(missing)}칸을 붙여넣지 못했습니다: {preview}")
             else:
-                st.session_state[f"_schedule_saved_notice_{target_room['id']}"] = saved_count
-                st.success(f"{saved_count:,}칸을 '{target_room['room_name']}' 방에 복사했어요.")
+                invalidate_availability_cache(str(target_room["id"]))
+                queue_global_toast(f"{saved_count:,}칸의 일정을 '{target_room['room_name']}' 방에 붙여넣었어요.")
+                st.rerun()
         except Exception as exc:
             st.error(f"일정을 복사하지 못했습니다: {exc}")
 
@@ -1212,13 +1529,20 @@ def _blend_status_colors(values: list[str], include_unavailable: bool = True) ->
     return palette[max(0, min(len(palette) - 1, index))]
 
 
-def show_overview(room, members, windows):
+def show_overview(room, members, windows, availability_rows=None):
     st.subheader("합주 가능 시간")
+    mode_key = f"overview_filter_{room['id']}"
+    mode_saved_key = f"_saved_{mode_key}"
+    if mode_key not in st.session_state:
+        st.session_state[mode_key] = st.session_state.get(
+            mode_saved_key, "전원 합주 가능 시간"
+        )
     mode = st.segmented_control(
         "표시 방식", ["전원 합주 가능 시간", "모두"],
-        default="전원 합주 가능 시간", key=f"overview_filter_{room['id']}",
-        label_visibility="collapsed", width="stretch",
+        key=mode_key, label_visibility="collapsed", width="stretch",
+        on_change=_persist_widget_value, args=(mode_key, mode_saved_key),
     ) or "전원 합주 가능 시간"
+    st.session_state[mode_saved_key] = mode
 
     # Session filter stays tucked into an icon popover rather than taking permanent space.
     available_sessions = sorted({str(m.get("session") or "미지정") for m in members}, key=lambda x: (DEFAULT_SESSIONS.index(x) if x in DEFAULT_SESSIONS else 99, x))
@@ -1238,17 +1562,17 @@ def show_overview(room, members, windows):
             checkbox_key = f"session_filter_{room['id']}_{sess}"
             if checkbox_key not in st.session_state:
                 st.session_state[checkbox_key] = (sess in selected_saved) or (sess not in known_sessions)
-            if st.checkbox(sess, key=checkbox_key):
+            if st.checkbox(sess, key=checkbox_key, on_change=_keep_server_reads_cached):
                 selected_now.append(sess)
         c1, c2 = st.columns(2)
-        if c1.button("모두 선택", key=f"session_filter_all_{room['id']}", use_container_width=True):
-            for sess in available_sessions:
-                st.session_state[f"session_filter_{room['id']}_{sess}"] = True
-            st.rerun()
-        if c2.button("모두 해제", key=f"session_filter_none_{room['id']}", use_container_width=True):
-            for sess in available_sessions:
-                st.session_state[f"session_filter_{room['id']}_{sess}"] = False
-            st.rerun()
+        c1.button(
+            "모두 선택", key=f"session_filter_all_{room['id']}", use_container_width=True,
+            on_click=_set_session_filter_group, args=(str(room['id']), available_sessions, True),
+        )
+        c2.button(
+            "모두 해제", key=f"session_filter_none_{room['id']}", use_container_width=True,
+            on_click=_set_session_filter_group, args=(str(room['id']), available_sessions, False),
+        )
         st.session_state[f"session_filter_selected_{room['id']}"] = selected_now
         st.session_state[known_key] = available_sessions[:]
     selected_sessions = st.session_state.get(f"session_filter_selected_{room['id']}", available_sessions[:])
@@ -1258,7 +1582,7 @@ def show_overview(room, members, windows):
 
     dates = all_room_dates(room)
     minutes = visible_minutes(windows)
-    rows = get_availability(room['id'], dates)
+    rows = availability_rows if availability_rows is not None else get_availability(room['id'], dates)
     lookup = {(str(r['date']), str(r['user_id']), str(r['time'])[:5]): r['status'] for r in rows}
     display_map = session_display_map(filtered_members)
     statuses, cell_colors, cell_details = {}, {}, {}
@@ -1308,19 +1632,29 @@ def show_overview(room, members, windows):
         cell_details=cell_details,
     )
 
-def show_member_schedule(room, members, windows):
+def show_member_schedule(room, members, windows, availability_rows=None):
     st.subheader("멤버별 일정")
     if not members: return
     display_map = session_display_map(members)
     user_ids = [str(m["user_id"]) for m in members]
+    member_choice_key = f"member_choice_{room['id']}"
+    member_choice_saved_key = f"_saved_{member_choice_key}"
+    saved_member_id = st.session_state.get(member_choice_saved_key, user_ids[0])
+    if saved_member_id not in user_ids:
+        saved_member_id = user_ids[0]
+    if member_choice_key not in st.session_state:
+        st.session_state[member_choice_key] = saved_member_id
     chosen_id = st.selectbox(
         "일정을 확인할 멤버", user_ids,
         format_func=lambda uid: f"{next((m['name'] for m in members if str(m['user_id']) == uid), '이름 없음')} · {display_map.get(uid, '미지정')}",
-        key=f"member_choice_{room['id']}",
+        key=member_choice_key,
+        on_change=_persist_widget_value,
+        args=(member_choice_key, member_choice_saved_key),
     )
+    st.session_state[member_choice_saved_key] = chosen_id
     member=next(m for m in members if str(m['user_id'])==str(chosen_id))
     dates=all_room_dates(room); minutes=visible_minutes(windows)
-    rows=get_availability(room['id'],dates)
+    rows=availability_rows if availability_rows is not None else get_availability(room['id'],dates)
     statuses={(str(r['date']),str(r['time'])[:5]):r['status'] for r in rows if r['user_id']==member['user_id']}
     render_schedule_component(room,"",dates,minutes,windows,statuses,"",editable=False,key=f"member_{room['id']}_{member['user_id']}")
 
@@ -1330,32 +1664,76 @@ def show_host_settings(room, windows):
     prefix=f"host_{room['id']}"
     count_key=f"host_window_count_{room['id']}"
     if count_key not in st.session_state: st.session_state[count_key]=len(windows)
-    enabled=st.checkbox("합주 제외 시간대 설정",value=bool(windows),key=f"{prefix}_enabled")
+    enabled_key = f"{prefix}_enabled"
+    enabled_saved_key = f"{prefix}_enabled_saved"
+    if enabled_key not in st.session_state:
+        st.session_state[enabled_key] = st.session_state.get(
+            enabled_saved_key, bool(windows)
+        )
+    enabled=st.checkbox(
+        "합주 제외 시간대 설정", key=enabled_key,
+        on_change=_persist_widget_value, args=(enabled_key, enabled_saved_key),
+    )
+    st.session_state[enabled_saved_key] = enabled
     if enabled and st.session_state[count_key] == 0:
         st.session_state[count_key]=1
-        st.rerun()
+        rerun_local_ui()
     dates=all_room_dates(room)
     selected=[]
     if enabled:
         for i in range(st.session_state[count_key]):
-            old=windows[i] if i<len(windows) else {'start':'00:00','end':'06:00','scope':'all','dates':[]}
+            old=st.session_state.get(f'{prefix}_values_{i}') or (windows[i] if i<len(windows) else {'start':'00:00','end':'06:00','scope':'all','dates':[]})
             a,b=st.columns(2); opts=time_choices(); eopts=time_choices(True)
-            sv=a.selectbox('시작',opts,index=opts.index(old.get('start','00:00')),key=f'{prefix}_s_{i}')
-            ev=b.selectbox('종료',eopts,index=eopts.index(old.get('end','06:00')),key=f'{prefix}_e_{i}')
+            sv=a.selectbox('시작',opts,index=opts.index(old.get('start','00:00')),key=f'{prefix}_s_{i}',on_change=_keep_server_reads_cached)
+            ev=b.selectbox('종료',eopts,index=eopts.index(old.get('end','06:00')),key=f'{prefix}_e_{i}',on_change=_keep_server_reads_cached)
             scopes=['all','weekdays','weekends','dates']; labels={'all':'전체','weekdays':'주중','weekends':'주말','dates':'날짜 선택'}
-            scope=st.radio('적용 날짜',scopes,index=scopes.index(old.get('scope','all')),format_func=lambda x:labels[x],horizontal=True,key=f'{prefix}_scope_{i}')
-            chosen=st.multiselect('날짜',dates,default=[date.fromisoformat(x) for x in old.get('dates',[]) if x in {d.isoformat() for d in dates}],format_func=lambda d:f'{d:%m/%d} ("월화수목금토일"[d.weekday()])',key=f'{prefix}_dates_{i}') if scope=='dates' else []
-            selected.append({'start':sv,'end':ev,'scope':scope,'dates':[d.isoformat() for d in chosen]})
-            if st.button('삭제',key=f'{prefix}_del_{i}'):
-                st.session_state[count_key]=max(0,st.session_state[count_key]-1)
-                st.rerun()
-        if st.button('+',key=f'{prefix}_add',use_container_width=False):
-            st.session_state[count_key]+=1
-            st.rerun()
-    if st.button('저장',type='primary',key=f'{prefix}_save',use_container_width=True):
+            scope=st.radio('적용 날짜',scopes,index=scopes.index(old.get('scope','all')),format_func=lambda x:labels[x],horizontal=True,key=f'{prefix}_scope_{i}',on_change=_keep_server_reads_cached)
+            chosen=st.multiselect('날짜',dates,default=[date.fromisoformat(x) for x in old.get('dates',[]) if x in {d.isoformat() for d in dates}],format_func=lambda d:f'{d:%m/%d} ("월화수목금토일"[d.weekday()])',key=f'{prefix}_dates_{i}',on_change=_keep_server_reads_cached) if scope=='dates' else []
+            window_values = {'start':sv,'end':ev,'scope':scope,'dates':[d.isoformat() for d in chosen]}
+            st.session_state[f'{prefix}_values_{i}'] = window_values
+            selected.append(window_values)
+            st.button(
+                '삭제', key=f'{prefix}_del_{i}',
+                on_click=_delete_host_window, args=(count_key,),
+            )
+        st.button(
+            '+', key=f'{prefix}_add', use_container_width=False,
+            on_click=_increment_count_key, args=(count_key,),
+        )
+    if st.button('저장',type='primary',key=f'{prefix}_save',use_container_width=True,on_click=_keep_server_reads_cached):
         if any(w['start']==w['end'] for w in selected): st.error('시작과 종료가 같은 시간대가 있습니다.'); return
         if any(w['scope']=='dates' and not w['dates'] for w in selected): st.error('날짜 선택을 사용한 시간대에는 최소 한 날짜를 골라 주세요.'); return
-        SUPABASE.table('rooms').update({'unavailable_windows':selected if enabled else []}).eq('id',room['id']).execute(); st.rerun()
+        with st.spinner('합주 제외 시간대를 저장하고 있어요'):
+            SUPABASE.table('rooms').update({'unavailable_windows':selected if enabled else []}).eq('id',room['id']).execute()
+        st.session_state.pop(f"_hapjugi_rooms_cache_{current_user_id()}", None)
+        queue_global_toast('합주 제외 시간대를 저장했어요.')
+        st.rerun()
+
+
+def _select_active_room(room_id: str) -> None:
+    room_id = str(room_id)
+    if str(st.session_state.get("active_room_id") or "") == room_id:
+        return
+
+    st.session_state["active_room_id"] = room_id
+
+    # Reuse a recently loaded schedule when switching back to a room. Only
+    # force a Supabase read when that room has no fresh schedule cache.
+    cache_prefix = f"_hapjugi_availability_cache_{room_id}_"
+    now = time.time()
+    has_fresh_schedule = any(
+        isinstance(entry, dict)
+        and "data" in entry
+        and now - float(entry.get("saved_at", 0)) <= CACHE_TTL_AVAILABILITY
+        for key, entry in st.session_state.items()
+        if str(key).startswith(cache_prefix)
+    )
+    if has_fresh_schedule:
+        st.session_state.pop("_force_active_room_availability_refresh", None)
+    else:
+        st.session_state["_force_active_room_availability_refresh"] = room_id
+
+    _keep_server_reads_cached()
 
 
 def show_my_rooms(user_id: str):
@@ -1364,9 +1742,11 @@ def show_my_rooms(user_id: str):
         st.info("아직 참여한 합주 방이 없습니다. 방을 만들거나 초대 코드로 참여해 주세요.")
         return None
 
-    # Fetch each room's member list once; reuse it for the selected room.
+    # Load member lists for uncached rooms together, instead of waiting for
+    # one network round-trip per room on the initial page load.
+    members_by_room = get_members_for_rooms([str(room["id"]) for room in rooms])
     for room in rooms:
-        room["_members"] = get_members(str(room["id"]))
+        room["_members"] = members_by_room.get(str(room["id"]), [])
 
     expanded_key = "_hapjugi_rooms_expanded"
     expanded = bool(st.session_state.get(expanded_key, False))
@@ -1387,13 +1767,12 @@ def show_my_rooms(user_id: str):
             '<div class="room-selector-heading">내 합주실</div>',
             unsafe_allow_html=True,
         )
-        if toggle_col.button(
+        toggle_col.button(
             "접기" if expanded else "펼치기",
             use_container_width=False,
             key="toggle_room_list_layout",
-        ):
-            st.session_state[expanded_key] = not expanded
-            st.rerun()
+            on_click=_toggle_room_list_layout,
+        )
 
         # This must remain a horizontal Streamlit container. CSS only controls
         # nowrap/scroll in the collapsed state and wrapping in the expanded state.
@@ -1443,15 +1822,15 @@ def show_my_rooms(user_id: str):
                     )
                     # The widget key gives CSS a stable hook to anchor the button
                     # to the card's lower-right corner without relying on DOM order.
-                    if st.button(
+                    st.button(
                         "선택됨" if is_selected else "이동",
                         type="primary" if is_selected else "secondary",
                         disabled=is_selected,
                         use_container_width=True,
                         key=f"room_open_{room_id}",
-                    ):
-                        st.session_state["active_room_id"] = room_id
-                        st.rerun()
+                        on_click=_select_active_room,
+                        args=(room_id,),
+                    )
 
     return next(r for r in rooms if str(r["id"]) == current)
 
@@ -1474,9 +1853,9 @@ def show_member_list_dialog(room_id, members, current_user_id, host_id):
         options = session_options(members)
         if current_session not in options:
             options.append(current_session)
-        new_name = st.text_input("이름", value=str(me.get("name") or ""), max_chars=40, key=f"edit_name_{room_id}")
-        session_choice = st.selectbox("세션", options + [ADD_SESSION_OPTION], index=options.index(current_session) if current_session in options else 0, key=f"edit_session_{room_id}")
-        new_session = st.text_input("새 세션 이름", max_chars=30, placeholder="예: 통기타, 바이올린", key=f"edit_custom_session_{room_id}") if session_choice == ADD_SESSION_OPTION else session_choice
+        new_name = st.text_input("이름", value=str(me.get("name") or ""), max_chars=40, key=f"edit_name_{room_id}", on_change=_keep_server_reads_cached)
+        session_choice = st.selectbox("세션", options + [ADD_SESSION_OPTION], index=options.index(current_session) if current_session in options else 0, key=f"edit_session_{room_id}", on_change=_keep_server_reads_cached)
+        new_session = st.text_input("새 세션 이름", max_chars=30, placeholder="예: 통기타, 바이올린", key=f"edit_custom_session_{room_id}", on_change=_keep_server_reads_cached) if session_choice == ADD_SESSION_OPTION else session_choice
         same = [m for m in members if str(m.get("session") or "미지정") == str(new_session) and str(m.get("user_id")) != str(current_user_id)]
         max_order = len(same) + 1
         old_order = int(me.get("session_order") or 1)
@@ -1485,8 +1864,11 @@ def show_member_list_dialog(room_id, members, current_user_id, host_id):
         order_key = f"edit_session_order_{room_id}"
         if st.session_state.get(order_key) not in order_options:
             st.session_state[order_key] = default_order
-        new_order = st.selectbox("같은 세션 내 순서", order_options, index=order_options.index(st.session_state[order_key]), format_func=lambda n: f"{n}번", key=order_key)
-        if st.button("정보 수정", use_container_width=True, key=f"save_member_info_{room_id}"):
+        new_order = st.selectbox("같은 세션 내 순서", order_options, index=order_options.index(st.session_state[order_key]), format_func=lambda n: f"{n}번", key=order_key, on_change=_keep_server_reads_cached)
+        if st.button(
+            "정보 수정", use_container_width=True,
+            key=f"save_member_info_{room_id}", on_click=_keep_server_reads_cached,
+        ):
             cleaned = new_name.strip()
             if not cleaned:
                 st.error("이름을 한 글자 이상 입력해 주세요.")
@@ -1494,9 +1876,11 @@ def show_member_list_dialog(room_id, members, current_user_id, host_id):
                 st.error("세션을 선택하거나 새 세션 이름을 입력해 주세요.")
             else:
                 try:
-                    SUPABASE.table("room_members").update({"name": cleaned}).eq("room_id", room_id).eq("user_id", current_user_id).execute()
-                    reorder_session_members(room_id, members, current_user_id, str(new_session), int(new_order))
-                    st.success("이름과 세션 정보를 수정했어요.")
+                    with st.spinner("멤버 정보를 저장하고 있어요"):
+                        SUPABASE.table("room_members").update({"name": cleaned}).eq("room_id", room_id).eq("user_id", current_user_id).execute()
+                        reorder_session_members(room_id, members, current_user_id, str(new_session), int(new_order))
+                    invalidate_room_caches(current_user_id, str(room_id))
+                    queue_global_toast("이름과 세션 정보를 수정했어요.")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"정보를 수정하지 못했습니다: {exc}")
@@ -1508,11 +1892,16 @@ def show_member_list_dialog(room_id, members, current_user_id, host_id):
         if not others:
             st.caption("방장 권한을 넘길 다른 멤버가 없습니다.")
         else:
-            target = st.selectbox("새 방장", others, format_func=lambda m: f"{m.get('name', '이름 없음')} · {display_map.get(str(m.get('user_id')), m.get('session', '미지정'))}", key=f"transfer_target_{room_id}")
-            if st.button("방장 권한 양도", type="primary", use_container_width=True, key=f"transfer_host_{room_id}"):
+            target = st.selectbox("새 방장", others, format_func=lambda m: f"{m.get('name', '이름 없음')} · {display_map.get(str(m.get('user_id')), m.get('session', '미지정'))}", key=f"transfer_target_{room_id}", on_change=_keep_server_reads_cached)
+            if st.button(
+                "방장 권한 양도", type="primary", use_container_width=True,
+                key=f"transfer_host_{room_id}", on_click=_keep_server_reads_cached,
+            ):
                 try:
-                    SUPABASE.rpc("transfer_room_host", {"p_room_id": room_id, "p_new_host_id": target["user_id"]}).execute()
-                    st.success(f"{target.get('name', '선택한 멤버')} 님에게 방장 권한을 양도했어요.")
+                    with st.spinner("방장 권한을 변경하고 있어요"):
+                        SUPABASE.rpc("transfer_room_host", {"p_room_id": room_id, "p_new_host_id": target["user_id"]}).execute()
+                    invalidate_room_caches(current_user_id, str(room_id))
+                    queue_global_toast(f"{target.get('name', '선택한 멤버')} 님에게 방장 권한을 양도했어요.")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"방장 권한을 양도하지 못했습니다. SQL 마이그레이션 적용 여부를 확인해 주세요. ({exc})")
@@ -1526,24 +1915,58 @@ def show_active_room(user_id: str):
     me=next((m for m in members if str(m['user_id'])==str(user_id)),None)
     if not me: st.error('이 방의 멤버 정보를 찾지 못했습니다.'); return
     windows=get_windows(room)
+    dates = all_room_dates(room)
+    force_room_refresh = str(st.session_state.pop("_force_active_room_availability_refresh", "")) == str(room["id"])
+    availability_rows = get_availability(room["id"], dates, force_refresh=force_room_refresh)
     title, member_action, leave_action = st.columns([5, 1.5, 1])
     title.subheader(room['room_name'])
     title.caption(f"방 코드 **{room['room_code']}** · 내 이름 **{me['name']}** · 세션 **{session_display_map(members).get(str(user_id), me.get('session', '미지정'))}**")
-    if member_action.button(f"멤버 {len(members)}명", use_container_width=True, key=f"show_members_{room['id']}"):
+    if member_action.button(
+        f"멤버 {len(members)}명", use_container_width=True,
+        key=f"show_members_{room['id']}", on_click=_keep_server_reads_cached,
+    ):
         show_member_list_dialog(room['id'], members, user_id, room.get("host_id"))
-    if leave_action.button('방 나가기', use_container_width=True):
-        SUPABASE.table('room_members').delete().eq('room_id',room['id']).eq('user_id',user_id).execute(); st.session_state.pop('active_room_id',None); st.rerun()
+    if leave_action.button('방 나가기', use_container_width=True, on_click=_keep_server_reads_cached):
+        with st.spinner('합주실에서 나가는 중이에요'):
+            SUPABASE.table('room_members').delete().eq('room_id',room['id']).eq('user_id',user_id).execute()
+        invalidate_room_caches(user_id, str(room['id']))
+        st.session_state.pop('active_room_id',None)
+        queue_global_toast('합주실에서 나왔어요.')
+        st.rerun()
     is_host=str(room['host_id'])==str(user_id)
-    tabs=st.tabs(['내 일정 입력','합주 가능 시간','멤버별 일정']+(['방장 설정'] if is_host else []))
-    with tabs[0]: show_schedule_input(room,user_id,windows)
-    with tabs[1]: show_overview(room,members,windows)
-    with tabs[2]: show_member_schedule(room,members,windows)
-    if is_host:
-        with tabs[3]: show_host_settings(room,windows)
+    tab_labels = ['내 일정 입력','합주 가능 시간','멤버별 일정'] + (['방장 설정'] if is_host else [])
+    if _supports_lazy_tabs():
+        tabs = st.tabs(
+            tab_labels, on_change="rerun", key=f"room_tabs_{room['id']}"
+        )
+        # Keep the editable grid mounted in the background: the browser-side
+        # optimistic input queue must remain alive while other tabs are viewed.
+        with tabs[0]:
+            show_schedule_input(room, user_id, windows, availability_rows)
+        if tabs[1].open:
+            with tabs[1]:
+                show_overview(room, members, windows, availability_rows)
+        if tabs[2].open:
+            with tabs[2]:
+                show_member_schedule(room, members, windows, availability_rows)
+        if is_host and tabs[3].open:
+            with tabs[3]:
+                show_host_settings(room, windows)
+    else:
+        # Compatibility path for Streamlit 1.50–1.54, before lazy tabs existed.
+        tabs = st.tabs(tab_labels)
+        with tabs[0]: show_schedule_input(room,user_id,windows,availability_rows)
+        with tabs[1]: show_overview(room,members,windows,availability_rows)
+        with tabs[2]: show_member_schedule(room,members,windows,availability_rows)
+        if is_host:
+            with tabs[3]: show_host_settings(room,windows)
 
 
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
+    st.session_state["_hapjugi_allow_stale_cache"] = bool(
+        st.session_state.pop("_hapjugi_keep_read_cache_once", False)
+    )
 
     # Read the actual appearance selected in Streamlit's settings menu.
     # Streamlit 1.50+ exposes this as st.context.theme.type.
@@ -2290,6 +2713,61 @@ def main():
       font-size:.79rem !important;
     }
 
+
+    /* Server reads/writes: keep Streamlit's spinner centered and unmistakable. */
+    div[data-testid="stSpinner"] {
+      position:fixed !important;
+      left:50% !important;
+      top:50% !important;
+      transform:translate(-50%,-50%) !important;
+      z-index:2147483000 !important;
+      display:flex !important;
+      align-items:center !important;
+      justify-content:center !important;
+      gap:12px !important;
+      width:max-content !important;
+      max-width:calc(100vw - 32px) !important;
+      padding:18px 24px !important;
+      border:1px solid var(--hap-border) !important;
+      border-radius:16px !important;
+      background:var(--hap-surface) !important;
+      color:var(--hap-text) !important;
+      box-shadow:0 12px 36px rgba(0,0,0,.24) !important;
+      font-size:14px !important;
+      font-weight:700 !important;
+      pointer-events:none !important;
+    }
+    body:has(div[data-testid="stSpinner"])::after {
+      content:"";
+      position:fixed;
+      inset:0;
+      z-index:2147482999;
+      background:rgba(15,23,42,.16);
+      pointer-events:none;
+    }
+
+    /* Global top-center toast; it lives above the page and does not take layout space. */
+    div.st-key-hapjugi-global-toast-host {
+      position:fixed !important;
+      top:10px !important;
+      left:50% !important;
+      transform:translateX(-50%) !important;
+      width:min(680px, calc(100vw - 24px)) !important;
+      height:68px !important;
+      margin:0 !important;
+      padding:0 !important;
+      z-index:2147483647 !important;
+      pointer-events:none !important;
+      overflow:visible !important;
+    }
+    div.st-key-hapjugi-global-toast-host iframe {
+      display:block !important;
+      width:100% !important;
+      height:68px !important;
+      border:0 !important;
+      pointer-events:auto !important;
+    }
+
     @media (max-width:680px) {
       section.main > div.block-container,
       [data-testid="stMainBlockContainer"] {
@@ -2327,6 +2805,8 @@ def main():
     }
     </style>""", unsafe_allow_html=True)
     require_login()
+    with st.container(key="hapjugi-global-toast-host"):
+        render_global_toast()
     global SUPABASE
     SUPABASE=get_supabase(); user_id=current_user_id()
     # 로그아웃은 별도 우측 정렬 행에 두고, 제목은 화면 전체를 기준으로 중앙 정렬한다.
@@ -2334,9 +2814,11 @@ def main():
     with logout_col:
         if st.button('로그아웃', use_container_width=True, key="top_logout"):
             try:
-                SUPABASE.auth.sign_out()
+                with st.spinner("로그아웃하고 있어요"):
+                    SUPABASE.auth.sign_out()
             finally:
                 st.session_state.pop("_hapjugi_supabase_client", None)
+                st.session_state.pop("_hapjugi_current_user_id", None)
                 st.logout()
     st.markdown(f'<div class="app-brand-title">{APP_TITLE}</div>', unsafe_allow_html=True)
 
@@ -2350,7 +2832,7 @@ def main():
     # 세 개 메뉴를 별도 열에 가두지 않고, 위젯 자체를 전체 화면 중앙에 둔다.
     section = st.segmented_control(
         '메뉴', ['내 합주실', '방 만들기', '방 참여하기'],
-        key='main_section_radio', label_visibility='collapsed'
+        key='main_section_radio', label_visibility='collapsed', on_change=_keep_server_reads_cached
     )
     if section is None:
         section = '내 합주실'
@@ -2359,7 +2841,7 @@ def main():
     elif section=='방 만들기':
         show_room_creation(user_id)
     else:
-        show_join_room()
+        show_join_room(user_id)
 
 
 SUPABASE: Client
