@@ -646,15 +646,37 @@ def render_readonly_grid(dates, minutes, windows, statuses, titles=None) -> None
     """ + f'<div class="grid-wrap"><table class="grid"><thead><tr><th class="time">시간</th>{headers}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>', unsafe_allow_html=True)
 
 def render_schedule_component(room, user_id, dates, minutes, windows, statuses, selected_status, editable=True, key="schedule", reset_token=0, cell_colors=None, cell_details=None):
-    payload_statuses = {f"{d.isoformat()}|{minute_to_time(m)}": statuses.get((d.isoformat(), minute_to_time(m)), "") for d in dates for m in minutes}
-    blocked = {f"{d.isoformat()}|{minute_to_time(m)}" for d in dates for m in minutes if is_unavailable(minute_to_time(m), windows, d)}
-    # Hide unavailable slots that touch the start/end of each date. Keep each
-    # date's columns aligned, but remove a whole time row when every date hides it.
+    blocked = {
+        f"{d.isoformat()}|{minute_to_time(m)}"
+        for d in dates
+        for m in minutes
+        if is_unavailable(minute_to_time(m), windows, d)
+    }
+
+    # A paint event is handled in two reruns:
+    # 1) save the intended changes in session state and rerun immediately;
+    # 2) render the optimistic cells, show a spinner, then persist them.
+    # This lets the browser receive the new colors before the database request
+    # finishes. If persistence fails, the next rerun reads the database again,
+    # so only cells that did not reach the server return to their previous state.
+    event_state_key = f"_last_schedule_event_{key}"
+    pending_state_key = f"_pending_schedule_event_{key}"
+    pending = st.session_state.get(pending_state_key) if editable else None
+
+    display_statuses = dict(statuses)
+    if pending:
+        optimistic_status = pending.get("status")
+        for date_text, time_text in pending.get("affected", []):
+            cell_key = (str(date_text), str(time_text))
+            if optimistic_status == CLEAR_STATUS:
+                display_statuses.pop(cell_key, None)
+            elif optimistic_status in STATUS_OPTIONS:
+                display_statuses[cell_key] = optimistic_status
+
+    # Preserve the existing edge-hiding behavior for blocked time ranges.
     hidden = set()
-    visible_by_date = {}
     for d in dates:
         visible = compact_visible_minutes_for_date(windows, d)
-        visible_by_date[d.isoformat()] = set(visible)
         if visible:
             first_visible, last_visible = min(visible), max(visible)
             for m in minutes:
@@ -667,23 +689,100 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
         for m in minutes
         if dates and all(f"{d.isoformat()}|{minute_to_time(m)}" in hidden for d in dates)
     ]
-    result = SCHEDULE_COMPONENT(
-        dates=[d.isoformat() for d in dates],
-        minutes=minutes,
-        statuses=payload_statuses,
-        cell_colors=cell_colors or {},
-        cell_details=cell_details or {},
-        blocked=list(blocked),
-        hidden=list(hidden),
-        hidden_rows=hidden_rows,
-        status_options=STATUS_OPTIONS,
-        selected_status=selected_status,
-        editable=editable,
-        reset_token=reset_token,
-        key=key,
-        default=None,
-    )
-    event_state_key = f"_last_schedule_event_{key}"
+
+    def render_component(current_statuses, allow_edit=None):
+        payload_statuses = {
+            f"{d.isoformat()}|{minute_to_time(m)}": current_statuses.get(
+                (d.isoformat(), minute_to_time(m)), ""
+            )
+            for d in dates
+            for m in minutes
+        }
+        return SCHEDULE_COMPONENT(
+            dates=[d.isoformat() for d in dates],
+            minutes=minutes,
+            statuses=payload_statuses,
+            cell_colors=cell_colors or {},
+            cell_details=cell_details or {},
+            blocked=list(blocked),
+            hidden=list(hidden),
+            hidden_rows=hidden_rows,
+            status_options=STATUS_OPTIONS,
+            selected_status=selected_status,
+            editable=editable if allow_edit is None else allow_edit,
+            reset_token=reset_token,
+            key=key,
+            default=None,
+        )
+
+    if pending:
+        # The optimistic state is sent to the browser before the synchronous
+        # Supabase writes begin. st.spinner stays visible while those writes run.
+        failure_message = None
+        changed_count = len(pending.get("rows", [])) + sum(
+            len(times) for times in pending.get("clear_by_date", {}).values()
+        )
+        failed_cell_count = 0
+        with st.spinner("일정을 서버에 저장하고 있어요. 잠시만 기다려 주세요..."):
+            # Freeze further edits while this batch is being written so a
+            # second stroke cannot race with the pending event.
+            render_component(display_statuses, allow_edit=False)
+            try:
+                rows_to_upsert = pending.get("rows", [])
+                clear_by_date = {
+                    str(date_text): set(times)
+                    for date_text, times in pending.get("clear_by_date", {}).items()
+                }
+
+                if rows_to_upsert:
+                    _, missing = save_availability_rows_verified(
+                        room["id"], user_id, rows_to_upsert, batch_size=100
+                    )
+                    if missing:
+                        failed_cell_count += len(missing)
+                        preview = ", ".join(f"{d} {t}" for d, t in missing[:8])
+                        raise RuntimeError(
+                            f"저장 확인에 실패한 칸 {len(missing)}개: {preview}"
+                        )
+
+                failed_deletes = delete_availability_slots_verified(
+                    room["id"], user_id, clear_by_date, batch_size=40
+                )
+                if failed_deletes:
+                    failed_cell_count += len(failed_deletes)
+                    preview = ", ".join(f"{d} {t}" for d, t in failed_deletes[:8])
+                    raise RuntimeError(
+                        f"삭제 확인에 실패한 칸 {len(failed_deletes)}개: {preview}"
+                    )
+            except Exception as exc:
+                # The next rerun reloads the actual rows from Supabase. Successful
+                # cells therefore stay changed; only cells absent/unchanged on
+                # the server naturally revert to their persisted values.
+                if failed_cell_count:
+                    failure_message = (
+                        f"서버에 저장되지 않은 {failed_cell_count}칸은 이전 상태로 되돌렸어요. ({exc})"
+                    )
+                else:
+                    failure_message = (
+                        f"저장 결과를 확인하지 못했어요. 서버에 저장된 상태를 다시 불러옵니다. ({exc})"
+                    )
+
+        # Mark this event handled on both success and failure to prevent the
+        # component's last event value from being written a second time.
+        st.session_state[event_state_key] = pending.get("event_id")
+        st.session_state.pop(pending_state_key, None)
+        if failure_message:
+            st.session_state[f"_schedule_save_error_{room['id']}"] = failure_message
+        elif changed_count:
+            st.session_state[f"_schedule_saved_notice_{room['id']}"] = {
+                "count": changed_count,
+                "action": "delete" if pending.get("status") == CLEAR_STATUS else "save",
+            }
+        st.rerun()
+
+    # No queued write: render the last confirmed server state and inspect any
+    # newly returned component event.
+    result = render_component(display_statuses)
     if (
         editable
         and result
@@ -691,27 +790,25 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
         and result.get("event_id")
         and result.get("event_id") != st.session_state.get(event_state_key)
     ):
-        # A component event already caused this Streamlit run. Persist and
-        # read back every changed slot before rerunning the UI from DB state.
-        cells = result.get("cells") or []
         status = result.get("status") or selected_status
         rows_to_upsert = []
         clear_by_date: dict[str, set[str]] = {}
-        for cell in cells:
+
+        for cell in result.get("cells") or []:
             try:
                 d = date.fromisoformat(str(cell["date"]))
                 time_text = str(cell["minute"])
                 if ":" in time_text:
                     hour_text, minute_text = time_text.split(":", 1)
-                    m = int(hour_text) * 60 + int(minute_text)
+                    minute = int(hour_text) * 60 + int(minute_text)
                 else:
-                    m = int(time_text)
+                    minute = int(time_text)
             except (KeyError, TypeError, ValueError):
                 continue
 
-            if not 0 <= m < 1440 or m % 15 != 0:
+            if not 0 <= minute < 1440 or minute % 15 != 0:
                 continue
-            slot = minute_to_time(m)
+            slot = minute_to_time(minute)
             if is_unavailable(slot, windows, d):
                 continue
             if status == CLEAR_STATUS:
@@ -725,39 +822,26 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
                     "status": status,
                 })
 
-        try:
-            saved_count = 0
-            if rows_to_upsert:
-                saved_count, missing = save_availability_rows_verified(
-                    room["id"], user_id, rows_to_upsert, batch_size=100
-                )
-                if missing:
-                    preview = ", ".join(f"{d} {t}" for d, t in missing[:8])
-                    raise RuntimeError(f"저장 확인에 실패한 칸 {len(missing)}개: {preview}")
-
-            failed_deletes = delete_availability_slots_verified(
-                room["id"], user_id, clear_by_date, batch_size=40
-            )
-            if failed_deletes:
-                preview = ", ".join(f"{d} {t}" for d, t in failed_deletes[:8])
-                raise RuntimeError(f"삭제 확인에 실패한 칸 {len(failed_deletes)}개: {preview}")
-
-            # Mark the event handled only after the database read-back confirms
-            # every requested change. Then rerun so the grid is rebuilt solely
-            # from committed server data (no optimistic pending paint remains).
+        affected = sorted(
+            {(str(row["date"]), str(row["time"])[:5]) for row in rows_to_upsert}
+            | {(date_text, slot) for date_text, times in clear_by_date.items() for slot in times}
+        )
+        if not affected:
             st.session_state[event_state_key] = result["event_id"]
-            changed_count = len(rows_to_upsert) + sum(len(v) for v in clear_by_date.values())
-            if changed_count:
-                st.session_state[f"_schedule_saved_notice_{room['id']}"] = {
-                    "count": changed_count,
-                    "action": "delete" if status == CLEAR_STATUS else "save",
-                }
-                st.rerun()
-        except Exception as exc:
-            st.error(f"일정이 서버에 완전히 저장되지 않았어요. 화면에는 저장된 칸만 표시됩니다. ({exc})")
-            if st.button("저장 다시 시도", key=f"retry_schedule_save_{key}", type="primary"):
-                st.rerun()
+            return
 
+        st.session_state[pending_state_key] = {
+            "event_id": result["event_id"],
+            "status": status,
+            "rows": rows_to_upsert,
+            "clear_by_date": {
+                date_text: sorted(times) for date_text, times in clear_by_date.items()
+            },
+            "affected": [[date_text, slot] for date_text, slot in affected],
+        }
+        # Rerun once so the optimistic colors reach the component before the
+        # server write starts. The next run enters the spinner/persist branch.
+        st.rerun()
 
 def _window_editor(prefix: str, room_start: date, room_end: date, windows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if "create_window_count" not in st.session_state:
@@ -923,6 +1007,10 @@ def show_schedule_input(room, user_id, windows):
             st.success(f"{notice_count:,}칸의 일정이 서버에 저장되었어요.")
     elif saved_notice:
         st.success(f"{saved_notice:,}칸의 일정이 서버에 저장되었어요.")
+
+    save_error = st.session_state.pop(f"_schedule_save_error_{room['id']}", None)
+    if save_error:
+        st.error(save_error)
 
     # 안내 문구를 위쪽 중앙에 두고, 두 일괄 설정 버튼은 그 아래 한 줄로 모은다.
     reset_token_key = f"schedule_reset_{room['id']}"
