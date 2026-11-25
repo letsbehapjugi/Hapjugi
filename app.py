@@ -766,37 +766,76 @@ def render_schedule_component(room, user_id, dates, minutes, windows, statuses, 
         st.rerun()
         return
 
+    # The custom component keeps accepting strokes while this synchronous
+    # server request is running. Its browser-side queue sends them to Python in
+    # order, one event at a time.
+    save_indicator = st.empty()
+    save_indicator.markdown(
+        '''
+        <style>
+        @keyframes hapjugi-save-spin { to { transform: rotate(360deg); } }
+        .hapjugi-save-toast {
+            position:fixed !important; left:50vw !important; bottom:20px !important;
+            top:auto !important; right:auto !important; transform:translateX(-50%) !important;
+            z-index:2147483647 !important; display:flex !important; align-items:center !important;
+            justify-content:center !important; gap:10px !important;
+            width:max-content !important; max-width:calc(100vw - 28px) !important;
+            box-sizing:border-box !important; padding:11px 17px !important;
+            border:1px solid var(--hap-border, #64748b) !important;
+            border-radius:999px !important; background:var(--hap-surface, #fff) !important;
+            color:var(--hap-text, #1f2937) !important;
+            box-shadow:0 5px 22px rgba(0,0,0,.22) !important;
+            font-size:14px !important; font-weight:700 !important; line-height:1.25 !important;
+            white-space:nowrap !important; pointer-events:none !important;
+        }
+        .hapjugi-save-toast .spinner {
+            width:17px; height:17px; flex:0 0 17px; border-radius:50%;
+            border:2px solid color-mix(in srgb, var(--hap-text, #1f2937) 22%, transparent);
+            border-top-color:#2563EB; animation:hapjugi-save-spin .72s linear infinite;
+        }
+        </style>
+        <div class="hapjugi-save-toast" role="status" aria-live="polite">
+            <span class="spinner" aria-hidden="true"></span>
+            <span>서버에 일정을 저장하고 있어요</span>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
+
     # Persist each operation independently. If only part of a drag fails, the
     # next run reloads the actual database state: committed cells remain and
     # uncommitted cells naturally revert to their prior server values.
     failed_cells: set[tuple[str, str]] = set()
     failure_details: list[str] = []
 
-    if rows_to_upsert:
-        try:
-            _, missing = save_availability_rows_verified(
-                room["id"], user_id, rows_to_upsert, batch_size=100
-            )
-            failed_cells.update((str(d), str(t)[:5]) for d, t in missing)
-        except Exception as exc:
-            failed_cells.update(
-                (str(row["date"]), str(row["time"])[:5]) for row in rows_to_upsert
-            )
-            failure_details.append(f"일정 저장 오류: {exc}")
+    try:
+        if rows_to_upsert:
+            try:
+                _, missing = save_availability_rows_verified(
+                    room["id"], user_id, rows_to_upsert, batch_size=100
+                )
+                failed_cells.update((str(d), str(t)[:5]) for d, t in missing)
+            except Exception as exc:
+                failed_cells.update(
+                    (str(row["date"]), str(row["time"])[:5]) for row in rows_to_upsert
+                )
+                failure_details.append(f"일정 저장 오류: {exc}")
 
-    if clear_by_date:
-        try:
-            failed_deletes = delete_availability_slots_verified(
-                room["id"], user_id, clear_by_date, batch_size=40
-            )
-            failed_cells.update((str(d), str(t)[:5]) for d, t in failed_deletes)
-        except Exception as exc:
-            failed_cells.update(
-                (date_text, slot)
-                for date_text, times in clear_by_date.items()
-                for slot in times
-            )
-            failure_details.append(f"일정 삭제 오류: {exc}")
+        if clear_by_date:
+            try:
+                failed_deletes = delete_availability_slots_verified(
+                    room["id"], user_id, clear_by_date, batch_size=40
+                )
+                failed_cells.update((str(d), str(t)[:5]) for d, t in failed_deletes)
+            except Exception as exc:
+                failed_cells.update(
+                    (date_text, slot)
+                    for date_text, times in clear_by_date.items()
+                    for slot in times
+                )
+                failure_details.append(f"일정 삭제 오류: {exc}")
+    finally:
+        save_indicator.empty()
 
     # The next run reads the latest committed rows before sending this ack.
     # The iframe then removes its optimistic layer and paints only DB state.
