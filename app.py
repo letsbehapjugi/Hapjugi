@@ -1914,9 +1914,13 @@ def main():
     /* Main content spacing: the title sits near the page top, with a deliberate gap before cards. */
     section.main > div.block-container,
     [data-testid="stMainBlockContainer"] {
+      width:100% !important;
+      min-width:0 !important;
+      max-width:100% !important;
       padding-top:1rem !important;
       padding-left:clamp(1rem, 2vw, 1.5rem) !important;
       padding-right:clamp(1rem, 2vw, 1.5rem) !important;
+      overflow-x:clip !important;
     }
 
     div.st-key-room-selector-layout {
@@ -1962,10 +1966,18 @@ def main():
       border-radius:999px !important;
     }
 
-    /* Only the room list scrolls horizontally; each card has no scrollable area. */
+    /* The viewport is the only horizontal scroll area for the room cards. */
     div.st-key-room-carousel {
+      display:flex !important;
+      flex-direction:row !important;
+      flex-wrap:nowrap !important;
+      align-items:stretch !important;
+      justify-content:flex-start !important;
+      gap:16px !important;
       width:100% !important;
+      min-width:0 !important;
       max-width:100% !important;
+      flex:0 1 auto !important;
       margin:0 !important;
       padding:0 4px 14px !important;
       box-sizing:border-box !important;
@@ -1973,9 +1985,25 @@ def main():
       overflow-y:hidden !important;
       scrollbar-width:thin !important;
       overscroll-behavior-x:contain !important;
+      -webkit-overflow-scrolling:touch !important;
       touch-action:pan-x pan-y !important;
     }
-    div.st-key-room-carousel[data-testid="stHorizontalBlock"],
+    /* Some Streamlit versions put the flex row on the keyed element itself;
+       others add an inner stHorizontalBlock. Never give the scroll viewport
+       max-content width, or the whole page grows with the number of rooms. */
+    div.st-key-room-carousel[data-testid="stHorizontalBlock"] {
+      display:flex !important;
+      flex-direction:row !important;
+      flex-wrap:nowrap !important;
+      align-items:stretch !important;
+      justify-content:flex-start !important;
+      width:100% !important;
+      min-width:0 !important;
+      max-width:100% !important;
+      overflow-x:auto !important;
+      overflow-y:hidden !important;
+      box-sizing:border-box !important;
+    }
     div.st-key-room-carousel > [data-testid="stHorizontalBlock"] {
       display:flex !important;
       flex-direction:row !important;
@@ -2016,6 +2044,7 @@ def main():
       position:relative !important;
       display:block !important;
       flex:0 0 362px !important;
+      flex-shrink:0 !important;
       width:362px !important;
       min-width:362px !important;
       max-width:362px !important;
